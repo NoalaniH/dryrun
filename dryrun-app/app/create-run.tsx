@@ -5,8 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -57,10 +55,12 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_H}
-        decelerationRate="fast"
+        decelerationRate={0.985}
+        scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
         contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
           <View key={i} style={drum.item}>
@@ -113,6 +113,9 @@ export default function CreateRunScreen() {
   const [durationMinutes, setDurationMinutes] = useState(15);
   const [durationSeconds, setDurationSeconds] = useState(0);
   const [skipped, setSkipped] = useState(false);
+  const [promptEnabled, setPromptEnabled] = useState(false);
+  const [promptContent, setPromptContent] = useState<'cues' | 'verbiage'>('cues');
+  const [promptAdvance, setPromptAdvance] = useState<'auto' | 'manual'>('auto');
   const [error, setError] = useState('');
 
   async function handleSubmit() {
@@ -128,6 +131,9 @@ export default function CreateRunScreen() {
       title: trimmed,
       targetDurationSeconds: skipped ? null : durationMinutes * 60 + durationSeconds,
       blocks: [],
+      promptEnabled,
+      promptContent,
+      promptAdvance,
       createdAt: now,
       updatedAt: now,
     };
@@ -144,14 +150,9 @@ export default function CreateRunScreen() {
   const presetActive = (m: number) => durationMinutes === m && durationSeconds === 0;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
+    <View style={styles.root}>
+      {/* Static content above drum — no outer ScrollView competing for gestures */}
+      <View style={styles.above}>
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => router.back()}>
             <Text style={styles.back}>‹ Back</Text>
@@ -181,63 +182,122 @@ export default function CreateRunScreen() {
             <Text style={styles.skip}>{skipped ? 'SET' : 'SKIP'}</Text>
           </TouchableOpacity>
         </View>
+      </View>
 
-        {skipped ? (
-          <TouchableOpacity onPress={() => setSkipped(false)}>
-            <Text style={styles.skipped}>Tap to set duration</Text>
+      {/* Drum and presets live outside any ScrollView */}
+      {skipped ? (
+        <TouchableOpacity style={styles.skippedArea} onPress={() => setSkipped(false)}>
+          <Text style={styles.skipped}>Tap to set duration</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.below}>
+          <View style={styles.pickerRow}>
+            <DrumColumn
+              values={MINUTES}
+              selectedIndex={durationMinutes}
+              onSelect={setDurationMinutes}
+            />
+            <Text style={styles.colon}>:</Text>
+            <DrumColumn
+              values={SECONDS}
+              selectedIndex={durationSeconds}
+              onSelect={setDurationSeconds}
+            />
+          </View>
+
+          <View style={styles.pickerLabels}>
+            <Text style={styles.pickerLabel}>MIN</Text>
+            <Text style={styles.pickerLabel}>SEC</Text>
+          </View>
+
+          <View style={styles.presetRow}>
+            {PRESETS.map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[styles.preset, presetActive(m) && styles.presetActive]}
+                onPress={() => applyPreset(m)}
+              >
+                <Text style={[styles.presetText, presetActive(m) && styles.presetTextActive]}>
+                  {m} MIN
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      <View style={styles.footer}>
+        <View style={[styles.toggleRow, { marginBottom: promptEnabled ? 12 : 24 }]}>
+          <Text style={styles.label}>PROMPTER</Text>
+          <TouchableOpacity
+            style={[styles.masterToggle, promptEnabled && styles.masterToggleOn]}
+            onPress={() => setPromptEnabled((v) => !v)}
+          >
+            <Text style={[styles.masterToggleText, promptEnabled && styles.masterToggleTextOn]}>
+              {promptEnabled ? 'ON' : 'OFF'}
+            </Text>
           </TouchableOpacity>
-        ) : (
+        </View>
+
+        {promptEnabled && (
           <>
-            <View style={styles.pickerRow}>
-              <DrumColumn
-                values={MINUTES}
-                selectedIndex={durationMinutes}
-                onSelect={setDurationMinutes}
-              />
-              <Text style={styles.colon}>:</Text>
-              <DrumColumn
-                values={SECONDS}
-                selectedIndex={durationSeconds}
-                onSelect={setDurationSeconds}
-              />
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Content</Text>
+              <View style={styles.toggleGroup}>
+                {(['cues', 'verbiage'] as const).map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.toggleChip, promptContent === v && styles.toggleChipActive]}
+                    onPress={() => setPromptContent(v)}
+                  >
+                    <Text style={[styles.toggleChipText, promptContent === v && styles.toggleChipTextActive]}>
+                      {v.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
 
-            <View style={styles.pickerLabels}>
-              <Text style={styles.pickerLabel}>MIN</Text>
-              <Text style={styles.pickerLabel}>SEC</Text>
-            </View>
-
-            <View style={styles.presetRow}>
-              {PRESETS.map((m) => (
-                <TouchableOpacity
-                  key={m}
-                  style={[styles.preset, presetActive(m) && styles.presetActive]}
-                  onPress={() => applyPreset(m)}
-                >
-                  <Text style={[styles.presetText, presetActive(m) && styles.presetTextActive]}>
-                    {m} MIN
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={[styles.toggleRow, { marginBottom: 24 }]}>
+              <Text style={styles.toggleLabel}>Advance</Text>
+              <View style={styles.toggleGroup}>
+                {(['auto', 'manual'] as const).map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.toggleChip, promptAdvance === v && styles.toggleChipActive]}
+                    onPress={() => setPromptAdvance(v)}
+                  >
+                    <Text style={[styles.toggleChipText, promptAdvance === v && styles.toggleChipTextActive]}>
+                      {v.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </>
         )}
-      </ScrollView>
 
-      <View style={styles.footer}>
         <TouchableOpacity style={styles.button} onPress={handleSubmit}>
           <Text style={styles.buttonText}>Start building →</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  above: {
     paddingHorizontal: 28,
     paddingTop: 60,
-    paddingBottom: 24,
+  },
+  below: {
+    paddingHorizontal: 28,
+    flex: 1,
+    justifyContent: 'center',
   },
   topBar: {
     flexDirection: 'row',
@@ -273,7 +333,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   skip: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
-  skipped: { color: colors.gold, fontSize: 14, marginTop: 8 },
+  skippedArea: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  skipped: { color: colors.gold, fontSize: 14 },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -339,4 +404,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  toggleLabel: { color: colors.muted, fontSize: 11, letterSpacing: 2 },
+  toggleGroup: { flexDirection: 'row', gap: 8 },
+  toggleChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  toggleChipActive: { backgroundColor: colors.gold, borderColor: colors.gold },
+  toggleChipText: { color: colors.muted, fontSize: 11, letterSpacing: 1 },
+  toggleChipTextActive: { color: '#1a1100', fontWeight: '600' },
+  masterToggle: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+  },
+  masterToggleOn: { backgroundColor: colors.gold, borderColor: colors.gold },
+  masterToggleText: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
+  masterToggleTextOn: { color: '#1a1100', fontWeight: '600' },
 });

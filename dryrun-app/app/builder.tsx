@@ -13,6 +13,7 @@ import {
   NativeSyntheticEvent,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
 import { loadDryRunById, saveDryRun, deleteDryRun } from '../src/storage/dryRunStorage';
 import { getSelectedRunId, getPendingRun, clearPendingRun } from '../src/storage/selectedRunStore';
 import { loadLibrary, saveLibrary } from '../src/storage/libraryStorage';
@@ -59,10 +60,12 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_H}
-        decelerationRate="fast"
+        decelerationRate={0.985}
+        scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
         contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
           <View key={i} style={drum.item}>
@@ -108,10 +111,11 @@ function formatMinSec(total: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-type ModalView = 'closed' | 'picker' | 'create' | 'edit';
+type ModalView = 'closed' | 'picker' | 'create' | 'edit' | 'runInfo';
 
 export default function BuilderScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const [run, setRun] = useState<DryRun | null>(null);
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [modalView, setModalView] = useState<ModalView>('closed');
@@ -119,19 +123,31 @@ export default function BuilderScreen() {
   const [isNewRun, setIsNewRun] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [exitPrompt, setExitPrompt] = useState<'new' | 'dirty' | null>(null);
+  const pendingNavAction = useRef<any>(null);
   const originalRun = useRef<DryRun | null>(null);
   const [pickerTab, setPickerTab] = useState<'tricks' | 'bits'>('tricks');
+  const [modalScrollEnabled, setModalScrollEnabled] = useState(true);
 
   // Create form state (new library item)
   const [newTitle, setNewTitle] = useState('');
   const [newType, setNewType] = useState<LibraryItemType>('trick');
   const [newDurationMin, setNewDurationMin] = useState(0);
   const [newDurationSec, setNewDurationSec] = useState(0);
-  const [newDurationSkipped, setNewDurationSkipped] = useState(true);
+  const [newDurationSkipped, setNewDurationSkipped] = useState(false);
   const [newDescription, setNewDescription] = useState('');
   const [newVibe, setNewVibe] = useState('');
   const [newVerbiage, setNewVerbiage] = useState('');
+  const [newCues, setNewCues] = useState('');
   const [newNotes, setNewNotes] = useState('');
+
+  // Run info form state
+  const [runInfoTitle, setRunInfoTitle] = useState('');
+  const [runInfoDurationMin, setRunInfoDurationMin] = useState(0);
+  const [runInfoDurationSec, setRunInfoDurationSec] = useState(0);
+  const [runInfoDurationSkipped, setRunInfoDurationSkipped] = useState(true);
+  const [runInfoPromptEnabled, setRunInfoPromptEnabled] = useState(false);
+  const [runInfoPromptContent, setRunInfoPromptContent] = useState<'cues' | 'verbiage'>('cues');
+  const [runInfoPromptAdvance, setRunInfoPromptAdvance] = useState<'auto' | 'manual'>('auto');
 
   // Edit block form state (block instance only)
   const [editTitle, setEditTitle] = useState('');
@@ -141,6 +157,7 @@ export default function BuilderScreen() {
   const [editDurationSkipped, setEditDurationSkipped] = useState(true);
   const [editVibe, setEditVibe] = useState('');
   const [editVerbiage, setEditVerbiage] = useState('');
+  const [editCues, setEditCues] = useState('');
   const [editNotes, setEditNotes] = useState('');
 
   useEffect(() => {
@@ -174,6 +191,15 @@ export default function BuilderScreen() {
     }, [run?.id])
   );
 
+  useEffect(() => {
+    return navigation.addListener('beforeRemove', (e: any) => {
+      if (!isNewRun && !isDirty) return;
+      e.preventDefault();
+      pendingNavAction.current = e.data.action;
+      setExitPrompt(isNewRun ? 'new' : 'dirty');
+    });
+  }, [navigation, isNewRun, isDirty]);
+
   function handleExit() {
     if (!run) { router.navigate('/'); return; }
     if (isNewRun) { setExitPrompt('new'); return; }
@@ -183,18 +209,68 @@ export default function BuilderScreen() {
 
   async function handleExitSave() {
     setExitPrompt(null);
+    setIsNewRun(false);
+    setIsDirty(false);
     await saveDryRun(run!);
-    router.navigate('/');
+    if (pendingNavAction.current) {
+      navigation.dispatch(pendingNavAction.current);
+      pendingNavAction.current = null;
+    } else {
+      router.navigate('/');
+    }
   }
 
   async function handleExitDiscard() {
+    const prompt = exitPrompt;
     setExitPrompt(null);
-    if (exitPrompt === 'new') {
+    setIsNewRun(false);
+    setIsDirty(false);
+    if (prompt === 'new') {
       await deleteDryRun(run!.id);
     } else if (originalRun.current) {
       await saveDryRun(originalRun.current);
     }
-    router.navigate('/');
+    if (pendingNavAction.current) {
+      navigation.dispatch(pendingNavAction.current);
+      pendingNavAction.current = null;
+    } else {
+      router.navigate('/');
+    }
+  }
+
+  function openRunInfo() {
+    if (!run) return;
+    setRunInfoTitle(run.title);
+    if (run.targetDurationSeconds != null) {
+      setRunInfoDurationMin(Math.floor(run.targetDurationSeconds / 60));
+      setRunInfoDurationSec(run.targetDurationSeconds % 60);
+      setRunInfoDurationSkipped(false);
+    } else {
+      setRunInfoDurationMin(0);
+      setRunInfoDurationSec(0);
+      setRunInfoDurationSkipped(true);
+    }
+    setRunInfoPromptEnabled(run.promptEnabled ?? false);
+    setRunInfoPromptContent(run.promptContent ?? 'cues');
+    setRunInfoPromptAdvance(run.promptAdvance ?? 'auto');
+    setModalView('runInfo');
+  }
+
+  async function handleSaveRunInfo() {
+    if (!run || !runInfoTitle.trim()) return;
+    const updated: DryRun = {
+      ...run,
+      title: runInfoTitle.trim(),
+      targetDurationSeconds: runInfoDurationSkipped ? null : runInfoDurationMin * 60 + runInfoDurationSec,
+      promptEnabled: runInfoPromptEnabled,
+      promptContent: runInfoPromptContent,
+      promptAdvance: runInfoPromptAdvance,
+      updatedAt: new Date().toISOString(),
+    };
+    setRun(updated);
+    setIsDirty(true);
+    closeModal();
+    await saveDryRun(updated);
   }
 
   function openPicker() {
@@ -207,10 +283,11 @@ export default function BuilderScreen() {
     setNewType(pickerTab === 'bits' ? 'bit' : 'trick');
     setNewDurationMin(0);
     setNewDurationSec(0);
-    setNewDurationSkipped(true);
+    setNewDurationSkipped(false);
     setNewDescription('');
     setNewVibe('');
     setNewVerbiage('');
+    setNewCues('');
     setNewNotes('');
     setModalView('create');
   }
@@ -229,6 +306,7 @@ export default function BuilderScreen() {
     }
     setEditVibe(block.vibe ?? '');
     setEditVerbiage(block.verbiage ?? '');
+    setEditCues(block.cues ?? '');
     setEditNotes(block.notes);
     setEditingId(block.id);
     setModalView('edit');
@@ -249,6 +327,7 @@ export default function BuilderScreen() {
       notes: item.notes,
       vibe: item.defaultVibe,
       verbiage: item.defaultVerbiage,
+      cues: item.defaultCues,
       order: run.blocks.length,
       libraryItemId: item.id,
     };
@@ -299,6 +378,7 @@ export default function BuilderScreen() {
       description: newDescription.trim(),
       defaultVibe: newVibe.trim() || undefined,
       defaultVerbiage: newVerbiage.trim() || undefined,
+      defaultCues: newCues.trim() || undefined,
       notes: newNotes.trim(),
       createdAt: now,
       updatedAt: now,
@@ -311,6 +391,7 @@ export default function BuilderScreen() {
       notes: item.notes,
       vibe: item.defaultVibe,
       verbiage: item.defaultVerbiage,
+      cues: item.defaultCues,
       order: run.blocks.length,
       libraryItemId: item.id,
     };
@@ -340,6 +421,7 @@ export default function BuilderScreen() {
             durationSeconds: editedDuration,
             vibe: editVibe.trim() || undefined,
             verbiage: editVerbiage.trim() || undefined,
+            cues: editCues.trim() || undefined,
             notes: editNotes.trim(),
           }
         : b
@@ -399,25 +481,30 @@ export default function BuilderScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.runTitle}>{run.title}</Text>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <TouchableOpacity onPress={openRunInfo} style={styles.runInfoTouchable}>
+          <Text style={styles.runTitle}>{run.title}</Text>
+          <Text style={styles.runInfoHint}>✎</Text>
+        </TouchableOpacity>
 
         {/* Time summary */}
-        <View style={styles.timeRow}>
-          <View style={styles.timeLeft}>
-            <Text style={styles.timeBig}>{formatSec(totalSec)}</Text>
-            {targetSec != null && (
-              <Text style={styles.timeTarget}> / {formatSec(targetSec)}</Text>
+        <TouchableOpacity onPress={openRunInfo}>
+          <View style={styles.timeRow}>
+            <View style={styles.timeLeft}>
+              <Text style={styles.timeBig}>{formatSec(totalSec)}</Text>
+              {targetSec != null && (
+                <Text style={styles.timeTarget}> / {formatSec(targetSec)}</Text>
+              )}
+            </View>
+            {diffSec != null && (
+              <Text style={[styles.timeDiff, diffSec < 0 && styles.timeDiffOver]}>
+                {diffSec >= 0
+                  ? `-${formatSec(diffSec)} UNDER`
+                  : `+${formatSec(Math.abs(diffSec))} OVER`}
+              </Text>
             )}
           </View>
-          {diffSec != null && (
-            <Text style={[styles.timeDiff, diffSec < 0 && styles.timeDiffOver]}>
-              {diffSec >= 0
-                ? `-${formatSec(diffSec)} UNDER`
-                : `+${formatSec(Math.abs(diffSec))} OVER`}
-            </Text>
-          )}
-        </View>
+        </TouchableOpacity>
         <View style={styles.divider} />
 
         {run.blocks.length === 0 ? (
@@ -540,11 +627,159 @@ export default function BuilderScreen() {
         </View>
       </Modal>
 
-      {/* Block modal */}
-      <Modal visible={modalView !== 'closed'} animationType="slide">
+      {/* Run info modal */}
+      <Modal visible={modalView === 'runInfo'} animationType="slide">
         <View style={styles.fullScreen}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+          >
+            <View style={styles.fullScreenHeader}>
+              <Text style={styles.sheetHeading}>EDIT RUN</Text>
+              <TouchableOpacity
+                onPress={closeModal}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              >
+                <Text style={styles.fullScreenClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
+              <Text style={styles.sectionLabel}>NAME</Text>
+              <TextInput
+                style={styles.sheetInput}
+                placeholder="Run name"
+                placeholderTextColor={colors.muted}
+                value={runInfoTitle}
+                onChangeText={setRunInfoTitle}
+                autoFocus
+              />
+
+              <View style={styles.durationHeader}>
+                <Text style={styles.sectionLabel}>TARGET DURATION</Text>
+                <TouchableOpacity onPress={() => setRunInfoDurationSkipped((s) => !s)}>
+                  <Text style={styles.skip}>{runInfoDurationSkipped ? 'SET' : 'SKIP'}</Text>
+                </TouchableOpacity>
+              </View>
+              {runInfoDurationSkipped ? (
+                <TouchableOpacity style={styles.skippedRow} onPress={() => setRunInfoDurationSkipped(false)}>
+                  <Text style={styles.skipped}>Tap to set duration</Text>
+                </TouchableOpacity>
+              ) : (
+                <>
+                  <View
+                    style={styles.drumRow}
+                    onTouchStart={() => setModalScrollEnabled(false)}
+                    onTouchEnd={() => setModalScrollEnabled(true)}
+                    onTouchCancel={() => setModalScrollEnabled(true)}
+                  >
+                    <DrumColumn
+                      values={MINUTES}
+                      selectedIndex={runInfoDurationMin}
+                      onSelect={setRunInfoDurationMin}
+                    />
+                    <Text style={styles.colon}>:</Text>
+                    <DrumColumn
+                      values={SECONDS}
+                      selectedIndex={runInfoDurationSec}
+                      onSelect={setRunInfoDurationSec}
+                    />
+                  </View>
+                  <View style={styles.drumLabels}>
+                    <Text style={styles.drumLabel}>MIN</Text>
+                    <Text style={styles.drumLabel}>SEC</Text>
+                  </View>
+                  <View style={styles.presetRow}>
+                    {PRESETS.map((m) => (
+                      <TouchableOpacity
+                        key={m}
+                        style={[
+                          styles.preset,
+                          runInfoDurationMin === m && runInfoDurationSec === 0 && styles.presetActive,
+                        ]}
+                        onPress={() => { setRunInfoDurationMin(m); setRunInfoDurationSec(0); }}
+                      >
+                        <Text
+                          style={[
+                            styles.presetText,
+                            runInfoDurationMin === m && runInfoDurationSec === 0 && styles.presetTextActive,
+                          ]}
+                        >
+                          {m} MIN
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              <View style={[styles.promptSettingRow, { marginTop: 32, marginBottom: runInfoPromptEnabled ? 12 : 32 }]}>
+                <Text style={styles.sectionLabel}>PROMPTER</Text>
+                <TouchableOpacity
+                  style={[styles.promptChip, runInfoPromptEnabled && styles.promptChipActive]}
+                  onPress={() => setRunInfoPromptEnabled((v) => !v)}
+                >
+                  <Text style={[styles.promptChipText, runInfoPromptEnabled && styles.promptChipTextActive]}>
+                    {runInfoPromptEnabled ? 'ON' : 'OFF'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {runInfoPromptEnabled && (
+                <>
+                  <View style={styles.promptSettingRow}>
+                    <Text style={styles.promptSettingLabel}>Content</Text>
+                    <View style={styles.promptChipGroup}>
+                      {(['cues', 'verbiage'] as const).map((v) => (
+                        <TouchableOpacity
+                          key={v}
+                          style={[styles.promptChip, runInfoPromptContent === v && styles.promptChipActive]}
+                          onPress={() => setRunInfoPromptContent(v)}
+                        >
+                          <Text style={[styles.promptChipText, runInfoPromptContent === v && styles.promptChipTextActive]}>
+                            {v.toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  <View style={[styles.promptSettingRow, { marginBottom: 32 }]}>
+                    <Text style={styles.promptSettingLabel}>Advance</Text>
+                    <View style={styles.promptChipGroup}>
+                      {(['auto', 'manual'] as const).map((v) => (
+                        <TouchableOpacity
+                          key={v}
+                          style={[styles.promptChip, runInfoPromptAdvance === v && styles.promptChipActive]}
+                          onPress={() => setRunInfoPromptAdvance(v)}
+                        >
+                          <Text style={[styles.promptChipText, runInfoPromptAdvance === v && styles.promptChipTextActive]}>
+                            {v.toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                </>
+              )}
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRunInfo}>
+                  <Text style={styles.saveBtnText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* Block modal */}
+      <Modal visible={modalView !== 'closed' && modalView !== 'runInfo'} animationType="slide" onShow={() => setModalScrollEnabled(true)}>
+        <View style={styles.fullScreen}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
           >
             <View style={styles.fullScreenHeader}>
@@ -562,7 +797,7 @@ export default function BuilderScreen() {
                 <Text style={styles.fullScreenClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false}>
 
               {/* ── PICKER: select from library or choose action ── */}
               {modalView === 'picker' && (
@@ -642,7 +877,12 @@ export default function BuilderScreen() {
                     </TouchableOpacity>
                   ) : (
                     <>
-                      <View style={styles.drumRow}>
+                      <View
+                        style={styles.drumRow}
+                        onTouchStart={() => setModalScrollEnabled(false)}
+                        onTouchEnd={() => setModalScrollEnabled(true)}
+                        onTouchCancel={() => setModalScrollEnabled(true)}
+                      >
                         <DrumColumn
                           values={MINUTES}
                           selectedIndex={newDurationMin}
@@ -704,15 +944,27 @@ export default function BuilderScreen() {
                     onChangeText={setNewVibe}
                   />
 
-                  <Text style={styles.sectionLabel}>VERBIAGE / CUES</Text>
+                  <Text style={styles.sectionLabel}>VERBIAGE</Text>
                   <TextInput
                     style={styles.notesInput}
-                    placeholder="Words, phrasing, or performance reminders..."
+                    placeholder="Full script or phrasing..."
                     placeholderTextColor={colors.muted}
                     value={newVerbiage}
                     onChangeText={setNewVerbiage}
                     multiline
                     numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.sectionLabel}>CUES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                    placeholderTextColor={colors.muted}
+                    value={newCues}
+                    onChangeText={setNewCues}
+                    multiline
+                    numberOfLines={3}
                     textAlignVertical="top"
                   />
 
@@ -754,21 +1006,6 @@ export default function BuilderScreen() {
                     autoFocus
                   />
 
-                  <Text style={styles.sectionLabel}>TYPE</Text>
-                  <View style={styles.typeGrid}>
-                    {(['open', 'trick', 'bit', 'interaction', 'transition', 'close', 'custom'] as RoutineBlockType[]).map((t) => (
-                      <TouchableOpacity
-                        key={t}
-                        style={[styles.typeChip, editType === t && styles.typeChipActive]}
-                        onPress={() => setEditType(t)}
-                      >
-                        <Text style={[styles.typeChipText, editType === t && styles.typeChipTextActive]}>
-                          {t.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
                   <View style={styles.durationHeader}>
                     <Text style={styles.sectionLabel}>DURATION</Text>
                     <TouchableOpacity onPress={() => setEditDurationSkipped((s) => !s)}>
@@ -784,7 +1021,12 @@ export default function BuilderScreen() {
                     </TouchableOpacity>
                   ) : (
                     <>
-                      <View style={styles.drumRow}>
+                      <View
+                        style={styles.drumRow}
+                        onTouchStart={() => setModalScrollEnabled(false)}
+                        onTouchEnd={() => setModalScrollEnabled(true)}
+                        onTouchCancel={() => setModalScrollEnabled(true)}
+                      >
                         <DrumColumn
                           values={MINUTES}
                           selectedIndex={editDurationMin}
@@ -834,15 +1076,27 @@ export default function BuilderScreen() {
                     onChangeText={setEditVibe}
                   />
 
-                  <Text style={styles.sectionLabel}>VERBIAGE / CUES</Text>
+                  <Text style={styles.sectionLabel}>VERBIAGE</Text>
                   <TextInput
                     style={styles.notesInput}
-                    placeholder="Words, phrasing, or performance reminders..."
+                    placeholder="Full script or phrasing..."
                     placeholderTextColor={colors.muted}
                     value={editVerbiage}
                     onChangeText={setEditVerbiage}
                     multiline
                     numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.sectionLabel}>CUES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                    placeholderTextColor={colors.muted}
+                    value={editCues}
+                    onChangeText={setEditCues}
+                    multiline
+                    numberOfLines={3}
                     textAlignVertical="top"
                   />
 
@@ -891,11 +1145,23 @@ const styles = StyleSheet.create({
   headerTitle: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
   closeBtn: { color: colors.muted, fontSize: 18 },
   content: { paddingHorizontal: 24, paddingBottom: 24 },
+  runInfoTouchable: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+  },
+  runInfoHint: {
+    color: colors.gold,
+    fontSize: 22,
+    fontWeight: '600',
+    marginTop: 6,
+  },
   runTitle: {
     color: colors.cream,
     fontSize: 32,
     fontFamily: 'Georgia',
-    marginBottom: 12,
+    flex: 1,
   },
   timeRow: {
     flexDirection: 'row',
@@ -1245,4 +1511,22 @@ const styles = StyleSheet.create({
   exitDiscardBtnText: { color: '#c0392b', fontSize: 15, fontWeight: '500' },
   exitCancelBtn: { alignItems: 'center', paddingVertical: 4 },
   exitCancelBtnText: { color: colors.muted, fontSize: 14, letterSpacing: 0.5 },
+  promptSettingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  promptSettingLabel: { color: colors.muted, fontSize: 11, letterSpacing: 2 },
+  promptChipGroup: { flexDirection: 'row', gap: 8 },
+  promptChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  promptChipActive: { backgroundColor: colors.gold, borderColor: colors.gold },
+  promptChipText: { color: colors.muted, fontSize: 11, letterSpacing: 1 },
+  promptChipTextActive: { color: '#1a1100', fontWeight: '600' },
 });

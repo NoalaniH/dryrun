@@ -61,10 +61,12 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
         snapToInterval={ITEM_H}
-        decelerationRate="fast"
+        decelerationRate={0.985}
+        scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
         contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
           <View key={i} style={drum.item}>
@@ -209,10 +211,12 @@ export default function LibraryScreen() {
   const [type, setType] = useState<LibraryItemType>('trick');
   const [durationMin, setDurationMin] = useState(0);
   const [durationSec, setDurationSec] = useState(0);
-  const [durationSkipped, setDurationSkipped] = useState(true);
+  const [durationSkipped, setDurationSkipped] = useState(false);
+  const [modalScrollEnabled, setModalScrollEnabled] = useState(true);
   const [description, setDescription] = useState('');
   const [vibe, setVibe] = useState('');
   const [verbiage, setVerbiage] = useState('');
+  const [cues, setCues] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -233,10 +237,11 @@ export default function LibraryScreen() {
     setType(tab === 'bits' ? 'bit' : 'trick'); // 'runs' tab falls through to 'trick'
     setDurationMin(0);
     setDurationSec(0);
-    setDurationSkipped(true);
+    setDurationSkipped(false);
     setDescription('');
     setVibe('');
     setVerbiage('');
+    setCues('');
     setNotes('');
     setModalMode('add');
   }
@@ -257,6 +262,7 @@ export default function LibraryScreen() {
     setDescription(item.description);
     setVibe(item.defaultVibe ?? '');
     setVerbiage(item.defaultVerbiage ?? '');
+    setCues(item.defaultCues ?? '');
     setNotes(item.notes);
     setModalMode('edit');
   }
@@ -296,6 +302,7 @@ export default function LibraryScreen() {
         description: description.trim(),
         defaultVibe: vibe.trim() || undefined,
         defaultVerbiage: verbiage.trim() || undefined,
+        defaultCues: cues.trim() || undefined,
         notes: notes.trim(),
         updatedAt: now,
       };
@@ -309,6 +316,7 @@ export default function LibraryScreen() {
         description: description.trim(),
         defaultVibe: vibe.trim() || undefined,
         defaultVerbiage: verbiage.trim() || undefined,
+        defaultCues: cues.trim() || undefined,
         notes: notes.trim(),
         createdAt: now,
         updatedAt: now,
@@ -338,7 +346,7 @@ export default function LibraryScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Tabs */}
         <View style={styles.tabs}>
           {(['runs', 'tricks', 'bits'] as LibraryTab[]).map((t) => (
@@ -426,7 +434,7 @@ export default function LibraryScreen() {
       <Modal visible={modalMode !== 'closed'} animationType="slide">
         <View style={styles.fullScreen}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
           >
             <View style={styles.fullScreenHeader}>
@@ -441,7 +449,7 @@ export default function LibraryScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
               <TextInput
                 style={styles.sheetInput}
                 placeholder="Title"
@@ -463,7 +471,12 @@ export default function LibraryScreen() {
                 </TouchableOpacity>
               ) : (
                 <>
-                  <View style={styles.drumRow}>
+                  <View
+                    style={styles.drumRow}
+                    onTouchStart={() => setModalScrollEnabled(false)}
+                    onTouchEnd={() => setModalScrollEnabled(true)}
+                    onTouchCancel={() => setModalScrollEnabled(true)}
+                  >
                     <DrumColumn values={MINUTES} selectedIndex={durationMin} onSelect={setDurationMin} />
                     <Text style={styles.colon}>:</Text>
                     <DrumColumn values={SECONDS} selectedIndex={durationSec} onSelect={setDurationSec} />
@@ -509,15 +522,27 @@ export default function LibraryScreen() {
                 onChangeText={setVibe}
               />
 
-              <Text style={styles.fieldLabel}>VERBIAGE / CUES</Text>
+              <Text style={styles.fieldLabel}>VERBIAGE</Text>
               <TextInput
                 style={styles.notesInput}
-                placeholder="Words, phrasing, or performance reminders..."
+                placeholder="Full script or phrasing..."
                 placeholderTextColor={colors.muted}
                 value={verbiage}
                 onChangeText={setVerbiage}
                 multiline
                 numberOfLines={4}
+                textAlignVertical="top"
+              />
+
+              <Text style={styles.fieldLabel}>CUES</Text>
+              <TextInput
+                style={styles.notesInput}
+                placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                placeholderTextColor={colors.muted}
+                value={cues}
+                onChangeText={setCues}
+                multiline
+                numberOfLines={3}
                 textAlignVertical="top"
               />
 

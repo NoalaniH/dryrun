@@ -8,6 +8,7 @@ export type LibraryItem = {
   description: string;
   defaultVibe?: string;
   defaultVerbiage?: string;
+  defaultCues?: string;
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -30,15 +31,22 @@ export type RoutineBlock = {
   notes: string;
   vibe?: string;
   verbiage?: string;
+  cues?: string;
   order: number;
   libraryItemId?: string;
 };
+
+export type PromptContent = 'cues' | 'verbiage';
+export type PromptAdvance = 'auto' | 'manual';
 
 export type DryRun = {
   id: string;
   title: string;
   targetDurationSeconds: number | null;
   blocks: RoutineBlock[];
+  promptEnabled: boolean;
+  promptContent: PromptContent;
+  promptAdvance: PromptAdvance;
   createdAt: string;
   updatedAt: string;
 };
