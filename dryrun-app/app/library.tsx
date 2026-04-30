@@ -9,7 +9,8 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Alert,
+  Animated,
+  PanResponder,
   NativeScrollEvent,
   NativeSyntheticEvent,
 } from 'react-native';
@@ -116,12 +117,93 @@ function runMeta(run: DryRun): string {
   return parts.length > 0 ? parts.join('  ·  ') : 'No blocks yet';
 }
 
+const DELETE_W = 80;
+
+interface SwipeableRowProps {
+  onDelete: () => void;
+  children: React.ReactNode;
+}
+
+function SwipeableRow({ onDelete, children }: SwipeableRowProps) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isOpen = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderMove: (_, g) => {
+        const x = isOpen.current ? g.dx - DELETE_W : g.dx;
+        translateX.setValue(Math.min(0, x));
+      },
+      onPanResponderRelease: (_, g) => {
+        const movedLeft = g.dx < -DELETE_W / 2;
+        const shouldOpen = isOpen.current ? g.dx > -DELETE_W / 2 ? false : true : movedLeft;
+        isOpen.current = shouldOpen;
+        Animated.spring(translateX, {
+          toValue: shouldOpen ? -DELETE_W : 0,
+          useNativeDriver: true,
+          bounciness: 0,
+        }).start();
+      },
+    })
+  ).current;
+
+  function close() {
+    isOpen.current = false;
+    Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
+  }
+
+  return (
+    <View style={{ overflow: 'hidden', marginBottom: 8, borderRadius: 8 }}>
+      {/* Delete button behind the row */}
+      <View style={swipe.deleteBack}>
+        <TouchableOpacity
+          style={swipe.deleteBtn}
+          onPress={() => { close(); onDelete(); }}
+        >
+          <Text style={swipe.deleteTxt}>Delete</Text>
+        </TouchableOpacity>
+      </View>
+      {/* Sliding row */}
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
+const swipe = StyleSheet.create({
+  deleteBack: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: DELETE_W,
+    backgroundColor: '#c0392b',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteBtn: { flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' },
+  deleteTxt: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.5 },
+});
+
+type LibraryTab = 'runs' | 'tricks' | 'bits';
+type ModalMode = 'closed' | 'add' | 'edit';
+type DeleteTarget =
+  | { kind: 'run'; run: DryRun }
+  | { kind: 'item'; item: LibraryItem }
+  | null;
+
 export default function LibraryScreen() {
   const router = useRouter();
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [runs, setRuns] = useState<DryRun[]>([]);
-  const [showModal, setShowModal] = useState(false);
+  const [tab, setTab] = useState<LibraryTab>('runs');
+  const [modalMode, setModalMode] = useState<ModalMode>('closed');
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
 
   const [title, setTitle] = useState('');
   const [type, setType] = useState<LibraryItemType>('trick');
@@ -148,7 +230,7 @@ export default function LibraryScreen() {
   function openAdd() {
     setEditingItem(null);
     setTitle('');
-    setType('trick');
+    setType(tab === 'bits' ? 'bit' : 'trick'); // 'runs' tab falls through to 'trick'
     setDurationMin(0);
     setDurationSec(0);
     setDurationSkipped(true);
@@ -156,7 +238,7 @@ export default function LibraryScreen() {
     setVibe('');
     setVerbiage('');
     setNotes('');
-    setShowModal(true);
+    setModalMode('add');
   }
 
   function openEdit(item: LibraryItem) {
@@ -176,7 +258,7 @@ export default function LibraryScreen() {
     setVibe(item.defaultVibe ?? '');
     setVerbiage(item.defaultVerbiage ?? '');
     setNotes(item.notes);
-    setShowModal(true);
+    setModalMode('edit');
   }
 
   function openRun(run: DryRun) {
@@ -184,22 +266,18 @@ export default function LibraryScreen() {
     router.push('/builder');
   }
 
-  function confirmDeleteRun(run: DryRun) {
-    Alert.alert(
-      'Delete run?',
-      `"${run.title}" and all its blocks will be removed.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await deleteDryRun(run.id);
-            setRuns((prev) => prev.filter((r) => r.id !== run.id));
-          },
-        },
-      ]
-    );
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    if (deleteTarget.kind === 'run') {
+      await deleteDryRun(deleteTarget.run.id);
+      setRuns((prev) => prev.filter((r) => r.id !== deleteTarget.run.id));
+    } else {
+      const updated = library.filter((i) => i.id !== deleteTarget.item.id);
+      setLibrary(updated);
+      setModalMode('closed');
+      await saveLibrary(updated);
+    }
+    setDeleteTarget(null);
   }
 
   async function handleSave() {
@@ -239,34 +317,16 @@ export default function LibraryScreen() {
     }
 
     setLibrary(updated);
-    setShowModal(false);
+    setModalMode('closed');
     await saveLibrary(updated);
   }
 
   function handleDeleteItem() {
     if (!editingItem) return;
-    Alert.alert(
-      'Delete item?',
-      `"${editingItem.title}" will be removed from your library. Existing routine blocks will not be affected.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const updated = library.filter((i) => i.id !== editingItem.id);
-            setLibrary(updated);
-            setShowModal(false);
-            await saveLibrary(updated);
-          },
-        },
-      ],
-    );
+    setDeleteTarget({ kind: 'item', item: editingItem });
   }
 
-  const tricks = library.filter((i) => i.type === 'trick');
-  const bits = library.filter((i) => i.type === 'bit');
-  const hasItems = library.length > 0 || runs.length > 0;
+  const tabItems = library.filter((i) => i.type === (tab === 'tricks' ? 'trick' : 'bit'));
 
   return (
     <View style={styles.container}>
@@ -275,153 +335,121 @@ export default function LibraryScreen() {
           <Text style={styles.back}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>LIBRARY</Text>
-        <TouchableOpacity onPress={openAdd}>
-          <Text style={styles.addBtn}>+ Add</Text>
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {!hasItems ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>Nothing here yet.</Text>
-            <Text style={styles.emptyBody}>
-              Add tricks and bits to reuse across runs.
-            </Text>
-            <TouchableOpacity style={styles.addFirstButton} onPress={openAdd}>
-              <Text style={styles.addFirstText}>+ Add first item</Text>
+        {/* Tabs */}
+        <View style={styles.tabs}>
+          {(['runs', 'tricks', 'bits'] as LibraryTab[]).map((t) => (
+            <TouchableOpacity
+              key={t}
+              style={[styles.tab, tab === t && styles.tabActive]}
+              onPress={() => setTab(t)}
+            >
+              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
+                {t.toUpperCase()}
+              </Text>
             </TouchableOpacity>
-          </View>
-        ) : (
-          <>
-            {runs.length > 0 && (
-              <>
-                <Text style={styles.sectionLabel}>RUNS</Text>
-                {runs.map((run) => (
-                  <TouchableOpacity
-                    key={run.id}
-                    style={styles.runRow}
-                    onPress={() => openRun(run)}
-                    onLongPress={() => confirmDeleteRun(run)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.runInfo}>
-                      <Text style={styles.runTitle}>{run.title}</Text>
-                      <Text style={styles.runMeta}>{runMeta(run)}</Text>
-                    </View>
-                    <Text style={styles.editChevron}>›</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
+          ))}
+        </View>
 
-            {tricks.length > 0 && (
-              <>
-                <Text style={[styles.sectionLabel, runs.length > 0 && { marginTop: 28 }]}>
-                  TRICKS
-                </Text>
-                {tricks.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={styles.itemRow}
-                    onPress={() => openEdit(item)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.itemInfo}>
-                      <Text style={styles.itemTitle}>{item.title}</Text>
-                      {item.description ? (
-                        <Text style={styles.itemDescription} numberOfLines={1}>
-                          {item.description}
-                        </Text>
-                      ) : null}
-                      {(item.defaultDurationSeconds != null || item.notes) && (
-                        <Text style={styles.itemMeta}>
-                          {item.defaultDurationSeconds != null
-                            ? formatMinSec(item.defaultDurationSeconds)
-                            : ''}
-                          {item.defaultDurationSeconds != null && item.notes ? '  ·  ' : ''}
-                          {item.notes ? item.notes : ''}
-                        </Text>
-                      )}
-                    </View>
-                    <Text style={styles.editChevron}>›</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
+        {/* + New link */}
+        <TouchableOpacity
+          onPress={tab === 'runs' ? () => router.push('/create-run') : openAdd}
+          style={styles.newLink}
+        >
+          <Text style={styles.newLinkText}>+ New</Text>
+        </TouchableOpacity>
 
-            {bits.length > 0 && (
-              <>
-                <Text style={[styles.sectionLabel, (runs.length > 0 || tricks.length > 0) && { marginTop: 28 }]}>
-                  BITS
-                </Text>
-                {bits.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={styles.itemRow}
-                    onPress={() => openEdit(item)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.itemInfo}>
-                      <Text style={styles.itemTitle}>{item.title}</Text>
-                      {item.description ? (
-                        <Text style={styles.itemDescription} numberOfLines={1}>
-                          {item.description}
-                        </Text>
-                      ) : null}
-                      {(item.defaultDurationSeconds != null || item.notes) && (
-                        <Text style={styles.itemMeta}>
-                          {item.defaultDurationSeconds != null
-                            ? formatMinSec(item.defaultDurationSeconds)
-                            : ''}
-                          {item.defaultDurationSeconds != null && item.notes ? '  ·  ' : ''}
-                          {item.notes ? item.notes : ''}
-                        </Text>
-                      )}
-                    </View>
-                    <Text style={styles.editChevron}>›</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-          </>
+        {/* Runs tab */}
+        {tab === 'runs' && (
+          runs.length === 0 ? (
+            <Text style={styles.emptyTab}>No runs saved yet.</Text>
+          ) : (
+            runs.map((run) => (
+              <SwipeableRow key={run.id} onDelete={() => setDeleteTarget({ kind: 'run', run })}>
+                <TouchableOpacity
+                  style={styles.runRow}
+                  onPress={() => openRun(run)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.runInfo}>
+                    <Text style={styles.runTitle}>{run.title}</Text>
+                    <Text style={styles.runMeta}>{runMeta(run)}</Text>
+                  </View>
+                  <Text style={styles.editChevron}>›</Text>
+                </TouchableOpacity>
+              </SwipeableRow>
+            ))
+          )
+        )}
+
+        {/* Tricks / Bits tab */}
+        {tab !== 'runs' && (
+          tabItems.length === 0 ? (
+            <Text style={styles.emptyTab}>{`No ${tab} in your library yet.`}</Text>
+          ) : (
+            tabItems.map((item) => (
+              <SwipeableRow key={item.id} onDelete={() => setDeleteTarget({ kind: 'item', item })}>
+                <TouchableOpacity
+                  style={styles.itemRow}
+                  onPress={() => openEdit(item)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.itemInfo}>
+                    <Text style={styles.itemTitle}>{item.title}</Text>
+                    {item.description ? (
+                      <Text style={styles.itemDescription} numberOfLines={1}>
+                        {item.description}
+                      </Text>
+                    ) : null}
+                    {(item.defaultDurationSeconds != null || item.notes) && (
+                      <Text style={styles.itemMeta}>
+                        {item.defaultDurationSeconds != null
+                          ? formatMinSec(item.defaultDurationSeconds)
+                          : ''}
+                        {item.defaultDurationSeconds != null && item.notes ? '  ·  ' : ''}
+                        {item.notes ? item.notes : ''}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.editChevron}>›</Text>
+                </TouchableOpacity>
+              </SwipeableRow>
+            ))
+          )
         )}
       </ScrollView>
 
-      <Modal visible={showModal} animationType="slide" transparent>
-        <View style={styles.overlay}>
+      {/* Add / Edit modal — full screen */}
+      <Modal visible={modalMode !== 'closed'} animationType="slide">
+        <View style={styles.fullScreen}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.sheet}
+            style={{ flex: 1 }}
           >
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <View style={styles.handle} />
+            <View style={styles.fullScreenHeader}>
               <Text style={styles.sheetHeading}>
-                {editingItem ? 'EDIT TRICK OR BIT' : 'NEW TRICK OR BIT'}
+                {modalMode === 'edit' ? `EDIT ${type.toUpperCase()}` : `NEW ${type.toUpperCase()}`}
               </Text>
+              <TouchableOpacity
+                onPress={() => setModalMode('closed')}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              >
+                <Text style={styles.fullScreenClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent}>
               <TextInput
                 style={styles.sheetInput}
                 placeholder="Title"
                 placeholderTextColor={colors.muted}
                 value={title}
                 onChangeText={setTitle}
-                autoFocus={!editingItem}
+                autoFocus={modalMode === 'add'}
               />
-
-              <Text style={styles.fieldLabel}>TYPE</Text>
-              <View style={styles.typeToggle}>
-                {(['trick', 'bit'] as LibraryItemType[]).map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[styles.typeChip, type === t && styles.typeChipActive]}
-                    onPress={() => setType(t)}
-                  >
-                    <Text style={[styles.typeChipText, type === t && styles.typeChipTextActive]}>
-                      {t.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
 
               <View style={styles.durationHeader}>
                 <Text style={styles.fieldLabel}>DURATION</Text>
@@ -506,7 +534,7 @@ export default function LibraryScreen() {
               />
 
               <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowModal(false)}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalMode('closed')}>
                   <Text style={styles.cancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
@@ -514,13 +542,35 @@ export default function LibraryScreen() {
                 </TouchableOpacity>
               </View>
 
-              {editingItem ? (
+              {modalMode === 'edit' ? (
                 <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteItem}>
                   <Text style={styles.deleteBtnText}>Delete this item</Text>
                 </TouchableOpacity>
               ) : null}
             </ScrollView>
           </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* Delete confirmation */}
+      <Modal visible={deleteTarget !== null} animationType="fade" transparent>
+        <View style={styles.exitOverlay}>
+          <View style={styles.exitCard}>
+            <Text style={styles.exitTitle}>
+              {deleteTarget?.kind === 'run' ? 'Delete run?' : 'Delete item?'}
+            </Text>
+            <Text style={styles.exitBody}>
+              {deleteTarget?.kind === 'run'
+                ? `"${deleteTarget.run.title}" and all its blocks will be removed.`
+                : `"${deleteTarget?.item.title}" will be removed from your library. Existing routine blocks are not affected.`}
+            </Text>
+            <TouchableOpacity style={styles.exitDiscardBtn} onPress={confirmDelete}>
+              <Text style={styles.exitDiscardBtnText}>Delete</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.exitCancelBtn} onPress={() => setDeleteTarget(null)}>
+              <Text style={styles.exitCancelBtnText}>Keep it</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -539,34 +589,17 @@ const styles = StyleSheet.create({
   },
   back: { color: colors.cream, fontSize: 24 },
   headerTitle: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
-  addBtn: { color: colors.gold, fontSize: 14 },
   content: { paddingHorizontal: 24, paddingBottom: 40 },
-  empty: { alignItems: 'center', paddingTop: 80, gap: 8 },
-  emptyTitle: {
-    color: colors.muted,
-    fontSize: 18,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-  },
-  emptyBody: {
-    color: colors.muted,
-    fontSize: 14,
-    textAlign: 'center',
-    maxWidth: 240,
-    marginBottom: 24,
-  },
-  addFirstButton: {
-    backgroundColor: colors.gold,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    borderRadius: 10,
-  },
-  addFirstText: { color: '#1a1100', fontSize: 15, fontWeight: '600' },
   sectionLabel: {
     color: colors.muted,
     fontSize: 11,
     letterSpacing: 2.5,
     marginBottom: 12,
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 28,
   },
   // Runs
   runRow: {
@@ -574,7 +607,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 12,
-    marginBottom: 8,
     backgroundColor: colors.surface,
     borderRadius: 8,
   },
@@ -586,13 +618,48 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   runMeta: { color: colors.muted, fontSize: 12 },
+  // Tabs
+  tabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tabActive: {
+    backgroundColor: colors.gold,
+    borderColor: colors.gold,
+  },
+  tabText: {
+    color: colors.muted,
+    fontSize: 12,
+    letterSpacing: 2,
+    fontWeight: '600',
+  },
+  tabTextActive: { color: '#1a1100' },
+  newLink: { marginBottom: 20 },
+  newLinkText: {
+    color: colors.gold,
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
+  emptyTab: {
+    color: colors.muted,
+    fontSize: 14,
+    marginTop: 8,
+  },
   // Library items
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 12,
-    marginBottom: 8,
     backgroundColor: colors.surface,
     borderRadius: 8,
   },
@@ -611,30 +678,19 @@ const styles = StyleSheet.create({
   },
   itemMeta: { color: colors.muted, fontSize: 12, fontVariant: ['tabular-nums'] },
   editChevron: { color: colors.muted, fontSize: 20, marginLeft: 8 },
-  // Modal
-  overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+  // Full-screen modal
+  fullScreen: { flex: 1, backgroundColor: colors.bg },
+  fullScreenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 24,
-    paddingBottom: 40,
-    maxHeight: '90%',
+    paddingTop: 60,
+    paddingBottom: 20,
   },
-  handle: {
-    width: 36,
-    height: 4,
-    backgroundColor: colors.muted,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 12,
-    marginBottom: 24,
-  },
-  sheetHeading: { color: colors.muted, fontSize: 11, letterSpacing: 2.5, marginBottom: 20 },
+  fullScreenClose: { color: colors.muted, fontSize: 18 },
+  sheetHeading: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
+  formContent: { paddingHorizontal: 24, paddingBottom: 40 },
   sheetInput: {
     color: colors.cream,
     fontSize: 26,
@@ -645,17 +701,6 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   fieldLabel: { color: colors.muted, fontSize: 11, letterSpacing: 2, marginBottom: 12 },
-  typeToggle: { flexDirection: 'row', gap: 10, marginBottom: 28 },
-  typeChip: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  typeChipActive: { borderColor: colors.gold, backgroundColor: colors.gold },
-  typeChipText: { color: colors.muted, fontSize: 13 },
-  typeChipTextActive: { color: '#1a1100', fontWeight: '600' },
   durationHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -723,4 +768,41 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#1a1100', fontSize: 15, fontWeight: '700' },
   deleteBtn: { alignItems: 'center', paddingVertical: 20 },
   deleteBtnText: { color: '#c0392b', fontSize: 14, fontWeight: '500' },
+  // Delete confirmation modal
+  exitOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  exitCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 28,
+    width: '100%',
+  },
+  exitTitle: {
+    color: colors.cream,
+    fontSize: 22,
+    fontFamily: 'Georgia',
+    marginBottom: 8,
+  },
+  exitBody: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    marginBottom: 28,
+  },
+  exitDiscardBtn: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  exitDiscardBtnText: { color: '#c0392b', fontSize: 15, fontWeight: '500' },
+  exitCancelBtn: { alignItems: 'center', paddingVertical: 4 },
+  exitCancelBtnText: { color: colors.muted, fontSize: 14, letterSpacing: 0.5 },
 });

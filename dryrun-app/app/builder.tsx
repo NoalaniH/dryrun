@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,8 @@ import {
   Platform,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { loadDryRunById, saveDryRun, deleteDryRun } from '../src/storage/dryRunStorage';
 import { getSelectedRunId, getPendingRun, clearPendingRun } from '../src/storage/selectedRunStore';
 import { loadLibrary, saveLibrary } from '../src/storage/libraryStorage';
@@ -119,7 +118,9 @@ export default function BuilderScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isNewRun, setIsNewRun] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [exitPrompt, setExitPrompt] = useState<'new' | 'dirty' | null>(null);
   const originalRun = useRef<DryRun | null>(null);
+  const [pickerTab, setPickerTab] = useState<'tricks' | 'bits'>('tricks');
 
   // Create form state (new library item)
   const [newTitle, setNewTitle] = useState('');
@@ -159,63 +160,51 @@ export default function BuilderScreen() {
     });
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!run) return;
+      loadDryRunById(run.id).then((saved) => {
+        if (saved) {
+          setIsNewRun(false);
+          setIsDirty(false);
+          originalRun.current = saved;
+          setRun(saved);
+        }
+      });
+    }, [run?.id])
+  );
+
   function handleExit() {
     if (!run) { router.navigate('/'); return; }
+    if (isNewRun) { setExitPrompt('new'); return; }
+    if (isDirty) { setExitPrompt('dirty'); return; }
+    router.navigate('/');
+  }
 
-    if (isNewRun) {
-      Alert.alert(
-        'Save this run?',
-        `"${run.title}" hasn't been saved yet.`,
-        [
-          {
-            text: 'Discard',
-            style: 'destructive',
-            onPress: async () => {
-              await deleteDryRun(run.id);
-              router.navigate('/');
-            },
-          },
-          {
-            text: 'Save',
-            onPress: async () => {
-              await saveDryRun(run);
-              router.navigate('/');
-            },
-          },
-        ]
-      );
-      return;
+  async function handleExitSave() {
+    setExitPrompt(null);
+    await saveDryRun(run!);
+    router.navigate('/');
+  }
+
+  async function handleExitDiscard() {
+    setExitPrompt(null);
+    if (exitPrompt === 'new') {
+      await deleteDryRun(run!.id);
+    } else if (originalRun.current) {
+      await saveDryRun(originalRun.current);
     }
-
-    if (isDirty) {
-      Alert.alert(
-        'Unsaved changes',
-        'Do you want to save your changes?',
-        [
-          {
-            text: 'Discard',
-            style: 'destructive',
-            onPress: async () => {
-              if (originalRun.current) await saveDryRun(originalRun.current);
-              router.navigate('/');
-            },
-          },
-          { text: 'Save', onPress: () => router.navigate('/') },
-        ]
-      );
-      return;
-    }
-
     router.navigate('/');
   }
 
   function openPicker() {
+    setPickerTab('tricks');
     setModalView('picker');
   }
 
   function openCreate() {
     setNewTitle('');
-    setNewType('trick');
+    setNewType(pickerTab === 'bits' ? 'bit' : 'trick');
     setNewDurationMin(0);
     setNewDurationSec(0);
     setNewDurationSkipped(true);
@@ -269,6 +258,7 @@ export default function BuilderScreen() {
       updatedAt: new Date().toISOString(),
     };
     setRun(updated);
+    setIsNewRun(false);
     setIsDirty(true);
     closeModal();
     await saveDryRun(updated);
@@ -290,6 +280,7 @@ export default function BuilderScreen() {
       updatedAt: new Date().toISOString(),
     };
     setRun(updated);
+    setIsNewRun(false);
     setIsDirty(true);
     closeModal();
     await saveDryRun(updated);
@@ -331,6 +322,7 @@ export default function BuilderScreen() {
     };
     setLibrary(updatedLib);
     setRun(updatedRun);
+    setIsNewRun(false);
     setIsDirty(true);
     closeModal();
     await Promise.all([saveLibrary(updatedLib), saveDryRun(updatedRun)]);
@@ -515,7 +507,40 @@ export default function BuilderScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Modal */}
+      {/* Exit prompt */}
+      <Modal visible={exitPrompt !== null} animationType="fade" transparent>
+        <View style={styles.exitOverlay}>
+          <View style={styles.exitCard}>
+            <Text style={styles.exitTitle}>
+              {exitPrompt === 'new' ? 'Save this run?' : 'Unsaved changes'}
+            </Text>
+            <Text style={styles.exitBody}>
+              {exitPrompt === 'new'
+                ? `"${run.title}" hasn't been saved to your library yet.`
+                : 'Do you want to save your changes?'}
+            </Text>
+
+            <TouchableOpacity style={styles.exitSaveBtn} onPress={handleExitSave}>
+              <Text style={styles.exitSaveBtnText}>Save</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.exitDiscardBtn} onPress={handleExitDiscard}>
+              <Text style={styles.exitDiscardBtnText}>
+                {exitPrompt === 'new' ? 'Discard run' : 'Discard changes'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.exitCancelBtn}
+              onPress={() => setExitPrompt(null)}
+            >
+              <Text style={styles.exitCancelBtnText}>Keep editing</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Block modal */}
       <Modal visible={modalView !== 'closed'} animationType="slide">
         <View style={styles.fullScreen}>
           <KeyboardAvoidingView
@@ -527,11 +552,11 @@ export default function BuilderScreen() {
                 {modalView === 'picker'
                   ? 'ADD BLOCK'
                   : modalView === 'create'
-                  ? 'NEW TRICK OR BIT'
+                  ? `NEW ${newType.toUpperCase()}`
                   : 'EDIT BLOCK'}
               </Text>
               <TouchableOpacity
-                onPress={closeModal}
+                onPress={modalView === 'create' ? () => setModalView('picker') : closeModal}
                 hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               >
                 <Text style={styles.fullScreenClose}>✕</Text>
@@ -542,45 +567,51 @@ export default function BuilderScreen() {
               {/* ── PICKER: select from library or choose action ── */}
               {modalView === 'picker' && (
                 <>
-                  <Text style={styles.sectionLabel}>LIBRARY</Text>
-                  {library.length === 0 ? (
+                  {/* Tab bar */}
+                  <View style={styles.pickerTabs}>
+                    {(['tricks', 'bits'] as const).map((tab) => (
+                      <TouchableOpacity
+                        key={tab}
+                        style={[styles.pickerTab, pickerTab === tab && styles.pickerTabActive]}
+                        onPress={() => setPickerTab(tab)}
+                      >
+                        <Text style={[styles.pickerTabText, pickerTab === tab && styles.pickerTabTextActive]}>
+                          {tab.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <TouchableOpacity onPress={openCreate} style={styles.pickerNewLink}>
+                    <Text style={styles.pickerNewLinkText}>+ New</Text>
+                  </TouchableOpacity>
+
+                  {/* Filtered library items */}
+                  {library.filter((i) => i.type === (pickerTab === 'tricks' ? 'trick' : 'bit')).length === 0 ? (
                     <Text style={styles.emptyLibrary}>
-                      Your library is empty. Create your first trick or bit below.
+                      {`No ${pickerTab} in your library yet.`}
                     </Text>
                   ) : (
-                    library.map((item) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.libraryRow}
-                        onPress={() => handleAddFromLibrary(item)}
-                      >
-                        <View style={styles.libraryInfo}>
-                          <Text style={styles.libraryTitle}>{item.title}</Text>
-                          <Text style={styles.libraryMeta}>
-                            {item.type.toUpperCase()}
-                            {item.defaultDurationSeconds != null
-                              ? `  ·  ${formatMinSec(item.defaultDurationSeconds)}`
-                              : ''}
-                          </Text>
-                        </View>
-                        <Text style={styles.libraryPlus}>+</Text>
-                      </TouchableOpacity>
-                    ))
+                    library
+                      .filter((i) => i.type === (pickerTab === 'tricks' ? 'trick' : 'bit'))
+                      .map((item) => (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={styles.libraryRow}
+                          onPress={() => handleAddFromLibrary(item)}
+                        >
+                          <View style={styles.libraryInfo}>
+                            <Text style={styles.libraryTitle}>{item.title}</Text>
+                            <Text style={styles.libraryMeta}>
+                              {item.defaultDurationSeconds != null
+                                ? formatMinSec(item.defaultDurationSeconds)
+                                : 'no duration set'}
+                            </Text>
+                          </View>
+                          <Text style={styles.libraryPlus}>+</Text>
+                        </TouchableOpacity>
+                      ))
                   )}
-
-                  <View style={styles.pickerDivider} />
-
-                  <TouchableOpacity style={styles.actionRow} onPress={openCreate}>
-                    <Text style={styles.actionRowText}>+ New Trick or Bit</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.actionRow} onPress={handleQuickAdd}>
-                    <Text style={styles.actionRowText}>Quick add block</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.cancelRow} onPress={closeModal}>
-                    <Text style={styles.cancelRowText}>Cancel</Text>
-                  </TouchableOpacity>
                 </>
               )}
 
@@ -595,26 +626,6 @@ export default function BuilderScreen() {
                     onChangeText={setNewTitle}
                     autoFocus
                   />
-
-                  <Text style={styles.sectionLabel}>TYPE</Text>
-                  <View style={styles.typeToggle}>
-                    {(['trick', 'bit'] as LibraryItemType[]).map((t) => (
-                      <TouchableOpacity
-                        key={t}
-                        style={[styles.typeChip, newType === t && styles.typeChipActive]}
-                        onPress={() => setNewType(t)}
-                      >
-                        <Text
-                          style={[
-                            styles.typeChipText,
-                            newType === t && styles.typeChipTextActive,
-                          ]}
-                        >
-                          {t.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
 
                   <View style={styles.durationHeader}>
                     <Text style={styles.sectionLabel}>DURATION</Text>
@@ -1023,6 +1034,41 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 32,
   },
+  // Picker tabs
+  pickerTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  pickerTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pickerTabActive: {
+    backgroundColor: colors.gold,
+    borderColor: colors.gold,
+  },
+  pickerTabText: {
+    color: colors.muted,
+    fontSize: 12,
+    letterSpacing: 2,
+    fontWeight: '600',
+  },
+  pickerTabTextActive: {
+    color: '#1a1100',
+  },
+  pickerNewLink: {
+    marginBottom: 20,
+  },
+  pickerNewLinkText: {
+    color: colors.gold,
+    fontSize: 13,
+    letterSpacing: 0.5,
+  },
   // Picker
   emptyLibrary: {
     color: colors.muted,
@@ -1041,19 +1087,30 @@ const styles = StyleSheet.create({
   libraryTitle: { color: colors.cream, fontSize: 16, fontFamily: 'Georgia', marginBottom: 2 },
   libraryMeta: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
   libraryPlus: { color: colors.gold, fontSize: 22, paddingLeft: 12 },
+  pickerActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+  },
+  pickerActionBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  pickerActionText: {
+    color: colors.gold,
+    fontSize: 13,
+    letterSpacing: 0.5,
+    fontWeight: '500',
+  },
   pickerDivider: {
     height: 1,
     backgroundColor: colors.border,
     marginVertical: 20,
   },
-  actionRow: {
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  actionRowText: { color: colors.gold, fontSize: 15 },
-  cancelRow: { paddingVertical: 20, alignItems: 'center' },
-  cancelRowText: { color: colors.muted, fontSize: 14 },
   // Create / Edit form
   typeToggle: { flexDirection: 'row', gap: 10, marginBottom: 28 },
   typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 28 },
@@ -1143,4 +1200,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: { color: '#1a1100', fontSize: 15, fontWeight: '700' },
+  // Exit prompt
+  exitOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  exitCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    padding: 28,
+    width: '100%',
+  },
+  exitTitle: {
+    color: colors.cream,
+    fontSize: 22,
+    fontFamily: 'Georgia',
+    marginBottom: 8,
+  },
+  exitBody: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    marginBottom: 28,
+  },
+  exitSaveBtn: {
+    backgroundColor: colors.gold,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  exitSaveBtnText: { color: '#1a1100', fontSize: 15, fontWeight: '700' },
+  exitDiscardBtn: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  exitDiscardBtnText: { color: '#c0392b', fontSize: 15, fontWeight: '500' },
+  exitCancelBtn: { alignItems: 'center', paddingVertical: 4 },
+  exitCancelBtnText: { color: colors.muted, fontSize: 14, letterSpacing: 0.5 },
 });

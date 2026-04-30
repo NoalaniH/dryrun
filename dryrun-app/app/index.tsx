@@ -22,7 +22,7 @@ export default function HomeScreen() {
         <Text style={styles.headline}>Run it.</Text>
         <Text style={[styles.headline, styles.headlineGold]}>Land it.</Text>
         <Text style={styles.body}>
-          A focused rehearsal workspace. No database. No clutter. Just the act in
+          A focused rehearsal workspace. No distractions. No clutter. Just the act in
           front of you.
         </Text>
       </View>
