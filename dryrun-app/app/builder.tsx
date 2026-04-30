@@ -1,0 +1,1146 @@
+import { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Modal,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Alert,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { loadDryRunById, saveDryRun, deleteDryRun } from '../src/storage/dryRunStorage';
+import { getSelectedRunId, getPendingRun, clearPendingRun } from '../src/storage/selectedRunStore';
+import { loadLibrary, saveLibrary } from '../src/storage/libraryStorage';
+import type { DryRun, RoutineBlock, RoutineBlockType, LibraryItem, LibraryItemType } from '../src/types/dryRun';
+import { colors } from '../src/utils/theme';
+
+const ITEM_H = 54;
+const VISIBLE = 5;
+const DRUM_H = ITEM_H * VISIBLE;
+const MINUTES = Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0'));
+const SECONDS = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+const PRESETS = [5, 10, 15, 20, 30, 45];
+
+interface DrumProps {
+  values: string[];
+  selectedIndex: number;
+  onSelect: (i: number) => void;
+}
+
+function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
+  const scrollRef = useRef<ScrollView>(null);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    const y = selectedIndex * ITEM_H;
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      const t = setTimeout(() => {
+        scrollRef.current?.scrollTo({ y, animated: false });
+      }, 60);
+      return () => clearTimeout(t);
+    }
+    scrollRef.current?.scrollTo({ y, animated: true });
+  }, [selectedIndex]);
+
+  function settle(e: NativeSyntheticEvent<NativeScrollEvent>) {
+    const i = Math.round(e.nativeEvent.contentOffset.y / ITEM_H);
+    onSelect(Math.max(0, Math.min(values.length - 1, i)));
+  }
+
+  return (
+    <View style={drum.wrapper}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={ITEM_H}
+        decelerationRate="fast"
+        onMomentumScrollEnd={settle}
+        onScrollEndDrag={settle}
+        contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+      >
+        {values.map((v, i) => (
+          <View key={i} style={drum.item}>
+            <Text style={[drum.text, i === selectedIndex ? drum.textOn : drum.textOff]}>
+              {v}
+            </Text>
+          </View>
+        ))}
+      </ScrollView>
+      <View style={drum.highlight} pointerEvents="none" />
+    </View>
+  );
+}
+
+const drum = StyleSheet.create({
+  wrapper: { flex: 1, height: DRUM_H, overflow: 'hidden' },
+  item: { height: ITEM_H, justifyContent: 'center', alignItems: 'center' },
+  text: { fontSize: 30, fontWeight: '200', fontVariant: ['tabular-nums'], letterSpacing: 1 },
+  textOn: { color: colors.cream },
+  textOff: { color: colors.muted },
+  highlight: {
+    position: 'absolute',
+    top: ITEM_H * 2,
+    left: 0,
+    right: 0,
+    height: ITEM_H,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderTopColor: colors.border,
+    borderBottomColor: colors.border,
+  },
+});
+
+function formatSec(total: number): string {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatMinSec(total: number): string {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+type ModalView = 'closed' | 'picker' | 'create' | 'edit';
+
+export default function BuilderScreen() {
+  const router = useRouter();
+  const [run, setRun] = useState<DryRun | null>(null);
+  const [library, setLibrary] = useState<LibraryItem[]>([]);
+  const [modalView, setModalView] = useState<ModalView>('closed');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [isNewRun, setIsNewRun] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const originalRun = useRef<DryRun | null>(null);
+
+  // Create form state (new library item)
+  const [newTitle, setNewTitle] = useState('');
+  const [newType, setNewType] = useState<LibraryItemType>('trick');
+  const [newDurationMin, setNewDurationMin] = useState(0);
+  const [newDurationSec, setNewDurationSec] = useState(0);
+  const [newDurationSkipped, setNewDurationSkipped] = useState(true);
+  const [newDescription, setNewDescription] = useState('');
+  const [newVibe, setNewVibe] = useState('');
+  const [newVerbiage, setNewVerbiage] = useState('');
+  const [newNotes, setNewNotes] = useState('');
+
+  // Edit block form state (block instance only)
+  const [editTitle, setEditTitle] = useState('');
+  const [editType, setEditType] = useState<RoutineBlockType>('custom');
+  const [editDurationMin, setEditDurationMin] = useState(0);
+  const [editDurationSec, setEditDurationSec] = useState(0);
+  const [editDurationSkipped, setEditDurationSkipped] = useState(true);
+  const [editVibe, setEditVibe] = useState('');
+  const [editVerbiage, setEditVerbiage] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+
+  useEffect(() => {
+    const pending = getPendingRun();
+    if (pending) {
+      clearPendingRun();
+      setRun(pending);
+      setIsNewRun(true);
+      loadLibrary().then(setLibrary);
+      return;
+    }
+    const runId = getSelectedRunId();
+    Promise.all([runId ? loadDryRunById(runId) : Promise.resolve(null), loadLibrary()]).then(([r, lib]) => {
+      setRun(r);
+      if (r) originalRun.current = r;
+      setLibrary(lib);
+    });
+  }, []);
+
+  function handleExit() {
+    if (!run) { router.navigate('/'); return; }
+
+    if (isNewRun) {
+      Alert.alert(
+        'Save this run?',
+        `"${run.title}" hasn't been saved yet.`,
+        [
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: async () => {
+              await deleteDryRun(run.id);
+              router.navigate('/');
+            },
+          },
+          {
+            text: 'Save',
+            onPress: async () => {
+              await saveDryRun(run);
+              router.navigate('/');
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    if (isDirty) {
+      Alert.alert(
+        'Unsaved changes',
+        'Do you want to save your changes?',
+        [
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: async () => {
+              if (originalRun.current) await saveDryRun(originalRun.current);
+              router.navigate('/');
+            },
+          },
+          { text: 'Save', onPress: () => router.navigate('/') },
+        ]
+      );
+      return;
+    }
+
+    router.navigate('/');
+  }
+
+  function openPicker() {
+    setModalView('picker');
+  }
+
+  function openCreate() {
+    setNewTitle('');
+    setNewType('trick');
+    setNewDurationMin(0);
+    setNewDurationSec(0);
+    setNewDurationSkipped(true);
+    setNewDescription('');
+    setNewVibe('');
+    setNewVerbiage('');
+    setNewNotes('');
+    setModalView('create');
+  }
+
+  function openEdit(block: RoutineBlock) {
+    setEditTitle(block.title);
+    setEditType(block.type);
+    if (block.durationSeconds != null) {
+      setEditDurationMin(Math.floor(block.durationSeconds / 60));
+      setEditDurationSec(block.durationSeconds % 60);
+      setEditDurationSkipped(false);
+    } else {
+      setEditDurationMin(0);
+      setEditDurationSec(0);
+      setEditDurationSkipped(true);
+    }
+    setEditVibe(block.vibe ?? '');
+    setEditVerbiage(block.verbiage ?? '');
+    setEditNotes(block.notes);
+    setEditingId(block.id);
+    setModalView('edit');
+  }
+
+  function closeModal() {
+    setModalView('closed');
+    setEditingId(null);
+  }
+
+  async function handleAddFromLibrary(item: LibraryItem) {
+    if (!run) return;
+    const block: RoutineBlock = {
+      id: Date.now().toString(),
+      title: item.title,
+      type: item.type,
+      durationSeconds: item.defaultDurationSeconds,
+      notes: item.notes,
+      vibe: item.defaultVibe,
+      verbiage: item.defaultVerbiage,
+      order: run.blocks.length,
+      libraryItemId: item.id,
+    };
+    const updated: DryRun = {
+      ...run,
+      blocks: [...run.blocks, block],
+      updatedAt: new Date().toISOString(),
+    };
+    setRun(updated);
+    setIsDirty(true);
+    closeModal();
+    await saveDryRun(updated);
+  }
+
+  async function handleQuickAdd() {
+    if (!run) return;
+    const block: RoutineBlock = {
+      id: Date.now().toString(),
+      title: 'Custom block',
+      type: 'custom',
+      durationSeconds: null,
+      notes: '',
+      order: run.blocks.length,
+    };
+    const updated: DryRun = {
+      ...run,
+      blocks: [...run.blocks, block],
+      updatedAt: new Date().toISOString(),
+    };
+    setRun(updated);
+    setIsDirty(true);
+    closeModal();
+    await saveDryRun(updated);
+  }
+
+  async function handleCreateNew() {
+    if (!run || !newTitle.trim()) return;
+    const now = new Date().toISOString();
+    const itemId = `lib_${Date.now()}`;
+    const newDuration = newDurationSkipped ? null : newDurationMin * 60 + newDurationSec;
+    const item: LibraryItem = {
+      id: itemId,
+      title: newTitle.trim(),
+      type: newType,
+      defaultDurationSeconds: newDuration,
+      description: newDescription.trim(),
+      defaultVibe: newVibe.trim() || undefined,
+      defaultVerbiage: newVerbiage.trim() || undefined,
+      notes: newNotes.trim(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const block: RoutineBlock = {
+      id: `blk_${Date.now()}`,
+      title: item.title,
+      type: item.type,
+      durationSeconds: item.defaultDurationSeconds,
+      notes: item.notes,
+      vibe: item.defaultVibe,
+      verbiage: item.defaultVerbiage,
+      order: run.blocks.length,
+      libraryItemId: item.id,
+    };
+    const updatedLib = [...library, item];
+    const updatedRun: DryRun = {
+      ...run,
+      blocks: [...run.blocks, block],
+      updatedAt: now,
+    };
+    setLibrary(updatedLib);
+    setRun(updatedRun);
+    setIsDirty(true);
+    closeModal();
+    await Promise.all([saveLibrary(updatedLib), saveDryRun(updatedRun)]);
+  }
+
+  async function handleSaveEdit() {
+    if (!run || !editingId || !editTitle.trim()) return;
+    const editedDuration = editDurationSkipped ? null : editDurationMin * 60 + editDurationSec;
+    const blocks = run.blocks.map((b) =>
+      b.id === editingId
+        ? {
+            ...b,
+            title: editTitle.trim(),
+            type: editType,
+            durationSeconds: editedDuration,
+            vibe: editVibe.trim() || undefined,
+            verbiage: editVerbiage.trim() || undefined,
+            notes: editNotes.trim(),
+          }
+        : b
+    );
+    const updated: DryRun = { ...run, blocks, updatedAt: new Date().toISOString() };
+    setRun(updated);
+    setIsDirty(true);
+    closeModal();
+    await saveDryRun(updated);
+  }
+
+  async function handleDelete(id: string) {
+    if (!run) return;
+    const blocks = run.blocks
+      .filter((b) => b.id !== id)
+      .map((b, i) => ({ ...b, order: i }));
+    const updated: DryRun = { ...run, blocks, updatedAt: new Date().toISOString() };
+    setRun(updated);
+    setIsDirty(true);
+    await saveDryRun(updated);
+  }
+
+  async function move(id: string, dir: 'up' | 'down') {
+    if (!run) return;
+    const idx = run.blocks.findIndex((b) => b.id === id);
+    if (dir === 'up' && idx === 0) return;
+    if (dir === 'down' && idx === run.blocks.length - 1) return;
+    const next = [...run.blocks];
+    const swap = dir === 'up' ? idx - 1 : idx + 1;
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    const blocks = next.map((b, i) => ({ ...b, order: i }));
+    const updated: DryRun = { ...run, blocks, updatedAt: new Date().toISOString() };
+    setRun(updated);
+    setIsDirty(true);
+    await saveDryRun(updated);
+  }
+
+  if (!run) return null;
+
+  const totalSec = run.blocks.reduce((sum, b) => sum + (b.durationSeconds ?? 0), 0);
+  const targetSec = run.targetDurationSeconds;
+  const diffSec = targetSec != null ? targetSec - totalSec : null;
+
+  return (
+    <View style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={handleExit}>
+          <Text style={styles.back}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>ACT BUILDER</Text>
+        <TouchableOpacity
+          onPress={handleExit}
+          hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+        >
+          <Text style={styles.closeBtn}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text style={styles.runTitle}>{run.title}</Text>
+
+        {/* Time summary */}
+        <View style={styles.timeRow}>
+          <View style={styles.timeLeft}>
+            <Text style={styles.timeBig}>{formatSec(totalSec)}</Text>
+            {targetSec != null && (
+              <Text style={styles.timeTarget}> / {formatSec(targetSec)}</Text>
+            )}
+          </View>
+          {diffSec != null && (
+            <Text style={[styles.timeDiff, diffSec < 0 && styles.timeDiffOver]}>
+              {diffSec >= 0
+                ? `-${formatSec(diffSec)} UNDER`
+                : `+${formatSec(Math.abs(diffSec))} OVER`}
+            </Text>
+          )}
+        </View>
+        <View style={styles.divider} />
+
+        {run.blocks.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>An empty stage.</Text>
+            <Text style={styles.emptyBody}>Add the first beat of your act.</Text>
+            <TouchableOpacity style={styles.addFirstButton} onPress={openPicker}>
+              <Text style={styles.addFirstText}>+ Add first block</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            {run.blocks.map((block, index) => (
+              <TouchableOpacity
+                key={block.id}
+                style={styles.blockRow}
+                onPress={() => openEdit(block)}
+              >
+                <Text style={styles.blockIndex}>
+                  {String(index + 1).padStart(2, '0')}
+                </Text>
+                <View style={styles.blockInfo}>
+                  <Text style={styles.blockTitle}>{block.title}</Text>
+                  <View style={styles.blockMeta}>
+                    <Text style={styles.blockType}>{block.type.toUpperCase()}</Text>
+                    {block.durationSeconds != null && (
+                      <Text style={styles.blockDuration}>
+                        {formatMinSec(block.durationSeconds)}
+                      </Text>
+                    )}
+                    {block.libraryItemId != null && (
+                      <Text style={styles.libraryBadge}>◈ LIB</Text>
+                    )}
+                  </View>
+                  {block.vibe ? (
+                    <Text style={styles.vibePreview} numberOfLines={1}>
+                      {block.vibe}
+                    </Text>
+                  ) : null}
+                  {block.notes ? (
+                    <Text style={styles.notesPreview} numberOfLines={1}>
+                      {block.notes}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.blockActions}>
+                  <TouchableOpacity
+                    onPress={() => move(block.id, 'up')}
+                    style={styles.iconBtn}
+                  >
+                    <Text style={styles.iconBtnText}>↑</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => move(block.id, 'down')}
+                    style={styles.iconBtn}
+                  >
+                    <Text style={styles.iconBtnText}>↓</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleDelete(block.id)}
+                    style={styles.iconBtn}
+                  >
+                    <Text style={styles.iconBtnText}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity style={styles.addMore} onPress={openPicker}>
+              <Text style={styles.addMoreText}>+ Add block</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[
+            styles.startButton,
+            run.blocks.length === 0 && styles.startButtonDisabled,
+          ]}
+          onPress={() => run.blocks.length > 0 && router.push('/dry-run')}
+          disabled={run.blocks.length === 0}
+        >
+          <Text style={styles.startButtonText}>▶ Start Dry Run</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Modal */}
+      <Modal visible={modalView !== 'closed'} animationType="slide">
+        <View style={styles.fullScreen}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1 }}
+          >
+            <View style={styles.fullScreenHeader}>
+              <Text style={styles.sheetHeading}>
+                {modalView === 'picker'
+                  ? 'ADD BLOCK'
+                  : modalView === 'create'
+                  ? 'NEW TRICK OR BIT'
+                  : 'EDIT BLOCK'}
+              </Text>
+              <TouchableOpacity
+                onPress={closeModal}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              >
+                <Text style={styles.fullScreenClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent}>
+
+              {/* ── PICKER: select from library or choose action ── */}
+              {modalView === 'picker' && (
+                <>
+                  <Text style={styles.sectionLabel}>LIBRARY</Text>
+                  {library.length === 0 ? (
+                    <Text style={styles.emptyLibrary}>
+                      Your library is empty. Create your first trick or bit below.
+                    </Text>
+                  ) : (
+                    library.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.libraryRow}
+                        onPress={() => handleAddFromLibrary(item)}
+                      >
+                        <View style={styles.libraryInfo}>
+                          <Text style={styles.libraryTitle}>{item.title}</Text>
+                          <Text style={styles.libraryMeta}>
+                            {item.type.toUpperCase()}
+                            {item.defaultDurationSeconds != null
+                              ? `  ·  ${formatMinSec(item.defaultDurationSeconds)}`
+                              : ''}
+                          </Text>
+                        </View>
+                        <Text style={styles.libraryPlus}>+</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+
+                  <View style={styles.pickerDivider} />
+
+                  <TouchableOpacity style={styles.actionRow} onPress={openCreate}>
+                    <Text style={styles.actionRowText}>+ New Trick or Bit</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.actionRow} onPress={handleQuickAdd}>
+                    <Text style={styles.actionRowText}>Quick add block</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.cancelRow} onPress={closeModal}>
+                    <Text style={styles.cancelRowText}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+
+              {/* ── CREATE: new library item ── */}
+              {modalView === 'create' && (
+                <>
+                  <TextInput
+                    style={styles.sheetInput}
+                    placeholder="Title"
+                    placeholderTextColor={colors.muted}
+                    value={newTitle}
+                    onChangeText={setNewTitle}
+                    autoFocus
+                  />
+
+                  <Text style={styles.sectionLabel}>TYPE</Text>
+                  <View style={styles.typeToggle}>
+                    {(['trick', 'bit'] as LibraryItemType[]).map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        style={[styles.typeChip, newType === t && styles.typeChipActive]}
+                        onPress={() => setNewType(t)}
+                      >
+                        <Text
+                          style={[
+                            styles.typeChipText,
+                            newType === t && styles.typeChipTextActive,
+                          ]}
+                        >
+                          {t.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <View style={styles.durationHeader}>
+                    <Text style={styles.sectionLabel}>DURATION</Text>
+                    <TouchableOpacity onPress={() => setNewDurationSkipped((s) => !s)}>
+                      <Text style={styles.skip}>{newDurationSkipped ? 'SET' : 'SKIP'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {newDurationSkipped ? (
+                    <TouchableOpacity
+                      style={styles.skippedRow}
+                      onPress={() => setNewDurationSkipped(false)}
+                    >
+                      <Text style={styles.skipped}>Tap to set duration</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <View style={styles.drumRow}>
+                        <DrumColumn
+                          values={MINUTES}
+                          selectedIndex={newDurationMin}
+                          onSelect={setNewDurationMin}
+                        />
+                        <Text style={styles.colon}>:</Text>
+                        <DrumColumn
+                          values={SECONDS}
+                          selectedIndex={newDurationSec}
+                          onSelect={setNewDurationSec}
+                        />
+                      </View>
+                      <View style={styles.drumLabels}>
+                        <Text style={styles.drumLabel}>MIN</Text>
+                        <Text style={styles.drumLabel}>SEC</Text>
+                      </View>
+                      <View style={styles.presetRow}>
+                        {PRESETS.map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[
+                              styles.preset,
+                              newDurationMin === m && newDurationSec === 0 && styles.presetActive,
+                            ]}
+                            onPress={() => { setNewDurationMin(m); setNewDurationSec(0); }}
+                          >
+                            <Text
+                              style={[
+                                styles.presetText,
+                                newDurationMin === m && newDurationSec === 0 && styles.presetTextActive,
+                              ]}
+                            >
+                              {m} MIN
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  <Text style={[styles.sectionLabel, { marginTop: 24 }]}>DESCRIPTION</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="What is this trick or bit about?"
+                    placeholderTextColor={colors.muted}
+                    value={newDescription}
+                    onChangeText={setNewDescription}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.sectionLabel}>VIBE</Text>
+                  <TextInput
+                    style={styles.singleInput}
+                    placeholder="e.g. dark, slow build, playful"
+                    placeholderTextColor={colors.muted}
+                    value={newVibe}
+                    onChangeText={setNewVibe}
+                  />
+
+                  <Text style={styles.sectionLabel}>VERBIAGE / CUES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Words, phrasing, or performance reminders..."
+                    placeholderTextColor={colors.muted}
+                    value={newVerbiage}
+                    onChangeText={setNewVerbiage}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.sectionLabel}>NOTES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Setup, props, private reminders..."
+                    placeholderTextColor={colors.muted}
+                    value={newNotes}
+                    onChangeText={setNewNotes}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={() => setModalView('picker')}
+                    >
+                      <Text style={styles.cancelBtnText}>Back</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.saveBtn} onPress={handleCreateNew}>
+                      <Text style={styles.saveBtnText}>Save & Add</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {/* ── EDIT: modify a routine block (does not update library) ── */}
+              {modalView === 'edit' && (
+                <>
+                  <TextInput
+                    style={styles.sheetInput}
+                    placeholder="Block title"
+                    placeholderTextColor={colors.muted}
+                    value={editTitle}
+                    onChangeText={setEditTitle}
+                    autoFocus
+                  />
+
+                  <Text style={styles.sectionLabel}>TYPE</Text>
+                  <View style={styles.typeGrid}>
+                    {(['open', 'trick', 'bit', 'interaction', 'transition', 'close', 'custom'] as RoutineBlockType[]).map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        style={[styles.typeChip, editType === t && styles.typeChipActive]}
+                        onPress={() => setEditType(t)}
+                      >
+                        <Text style={[styles.typeChipText, editType === t && styles.typeChipTextActive]}>
+                          {t.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <View style={styles.durationHeader}>
+                    <Text style={styles.sectionLabel}>DURATION</Text>
+                    <TouchableOpacity onPress={() => setEditDurationSkipped((s) => !s)}>
+                      <Text style={styles.skip}>{editDurationSkipped ? 'SET' : 'SKIP'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {editDurationSkipped ? (
+                    <TouchableOpacity
+                      style={styles.skippedRow}
+                      onPress={() => setEditDurationSkipped(false)}
+                    >
+                      <Text style={styles.skipped}>Tap to set duration</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <View style={styles.drumRow}>
+                        <DrumColumn
+                          values={MINUTES}
+                          selectedIndex={editDurationMin}
+                          onSelect={setEditDurationMin}
+                        />
+                        <Text style={styles.colon}>:</Text>
+                        <DrumColumn
+                          values={SECONDS}
+                          selectedIndex={editDurationSec}
+                          onSelect={setEditDurationSec}
+                        />
+                      </View>
+                      <View style={styles.drumLabels}>
+                        <Text style={styles.drumLabel}>MIN</Text>
+                        <Text style={styles.drumLabel}>SEC</Text>
+                      </View>
+                      <View style={styles.presetRow}>
+                        {PRESETS.map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[
+                              styles.preset,
+                              editDurationMin === m && editDurationSec === 0 && styles.presetActive,
+                            ]}
+                            onPress={() => { setEditDurationMin(m); setEditDurationSec(0); }}
+                          >
+                            <Text
+                              style={[
+                                styles.presetText,
+                                editDurationMin === m && editDurationSec === 0 && styles.presetTextActive,
+                              ]}
+                            >
+                              {m} MIN
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  <Text style={[styles.sectionLabel, { marginTop: 24 }]}>VIBE</Text>
+                  <TextInput
+                    style={styles.singleInput}
+                    placeholder="e.g. dark, slow build, playful"
+                    placeholderTextColor={colors.muted}
+                    value={editVibe}
+                    onChangeText={setEditVibe}
+                  />
+
+                  <Text style={styles.sectionLabel}>VERBIAGE / CUES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Words, phrasing, or performance reminders..."
+                    placeholderTextColor={colors.muted}
+                    value={editVerbiage}
+                    onChangeText={setEditVerbiage}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                  />
+
+                  <Text style={styles.sectionLabel}>NOTES</Text>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder="Setup, props, private reminders..."
+                    placeholderTextColor={colors.muted}
+                    value={editNotes}
+                    onChangeText={setEditNotes}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.saveBtn} onPress={handleSaveEdit}>
+                      <Text style={styles.saveBtnText}>Save</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 16,
+  },
+  back: { color: colors.cream, fontSize: 24 },
+  headerTitle: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
+  closeBtn: { color: colors.muted, fontSize: 18 },
+  content: { paddingHorizontal: 24, paddingBottom: 24 },
+  runTitle: {
+    color: colors.cream,
+    fontSize: 32,
+    fontFamily: 'Georgia',
+    marginBottom: 12,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  timeLeft: { flexDirection: 'row', alignItems: 'baseline' },
+  timeBig: {
+    color: colors.cream,
+    fontSize: 24,
+    fontWeight: '300',
+    letterSpacing: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  timeTarget: { color: colors.muted, fontSize: 16 },
+  timeDiff: { color: colors.gold, fontSize: 11, letterSpacing: 1.5 },
+  timeDiffOver: { color: '#e05555' },
+  divider: {
+    height: 1,
+    backgroundColor: colors.gold,
+    opacity: 0.3,
+    marginBottom: 32,
+  },
+  empty: { alignItems: 'center', paddingTop: 60, gap: 8 },
+  emptyTitle: {
+    color: colors.muted,
+    fontSize: 18,
+    fontFamily: 'Georgia',
+    fontStyle: 'italic',
+  },
+  emptyBody: { color: colors.muted, fontSize: 14, marginBottom: 24 },
+  addFirstButton: {
+    backgroundColor: colors.gold,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 10,
+  },
+  addFirstText: { color: '#1a1100', fontSize: 15, fontWeight: '600' },
+  blockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 8,
+    gap: 12,
+  },
+  blockIndex: {
+    color: colors.muted,
+    fontSize: 13,
+    fontVariant: ['tabular-nums'],
+    width: 24,
+  },
+  blockInfo: { flex: 1 },
+  blockTitle: {
+    color: colors.cream,
+    fontSize: 16,
+    fontFamily: 'Georgia',
+    marginBottom: 4,
+  },
+  blockMeta: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  blockType: { color: colors.gold, fontSize: 10, letterSpacing: 1.5 },
+  blockDuration: {
+    color: colors.muted,
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  libraryBadge: {
+    color: colors.gold,
+    fontSize: 9,
+    letterSpacing: 1,
+    opacity: 0.6,
+  },
+  vibePreview: {
+    color: colors.gold,
+    fontSize: 11,
+    fontStyle: 'italic',
+    letterSpacing: 0.5,
+    marginTop: 4,
+    opacity: 0.8,
+  },
+  notesPreview: {
+    color: colors.muted,
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  blockActions: { flexDirection: 'row', gap: 2 },
+  iconBtn: { padding: 6 },
+  iconBtnText: { color: colors.muted, fontSize: 18 },
+  addMore: { paddingVertical: 20, alignItems: 'center' },
+  addMoreText: { color: colors.gold, fontSize: 14, letterSpacing: 1 },
+  footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 16 },
+  startButton: {
+    backgroundColor: colors.gold,
+    borderRadius: 10,
+    paddingVertical: 18,
+    alignItems: 'center',
+  },
+  startButtonDisabled: { opacity: 0.35 },
+  startButtonText: { color: '#1a1100', fontSize: 16, fontWeight: '700' },
+  // Modal shell
+  fullScreen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  fullScreenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 20,
+  },
+  fullScreenClose: { color: colors.muted, fontSize: 18 },
+  formContent: { paddingHorizontal: 24, paddingBottom: 40 },
+  sheetHeading: {
+    color: colors.muted,
+    fontSize: 11,
+    letterSpacing: 2.5,
+  },
+  sectionLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    letterSpacing: 2,
+    marginBottom: 12,
+  },
+  sheetInput: {
+    color: colors.cream,
+    fontSize: 26,
+    fontFamily: 'Georgia',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.gold,
+    paddingVertical: 8,
+    marginBottom: 32,
+  },
+  // Picker
+  emptyLibrary: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  libraryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  libraryInfo: { flex: 1 },
+  libraryTitle: { color: colors.cream, fontSize: 16, fontFamily: 'Georgia', marginBottom: 2 },
+  libraryMeta: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
+  libraryPlus: { color: colors.gold, fontSize: 22, paddingLeft: 12 },
+  pickerDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: 20,
+  },
+  actionRow: {
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  actionRowText: { color: colors.gold, fontSize: 15 },
+  cancelRow: { paddingVertical: 20, alignItems: 'center' },
+  cancelRowText: { color: colors.muted, fontSize: 14 },
+  // Create / Edit form
+  typeToggle: { flexDirection: 'row', gap: 10, marginBottom: 28 },
+  typeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 28 },
+  typeChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  typeChipActive: { borderColor: colors.gold, backgroundColor: colors.gold },
+  typeChipText: { color: colors.muted, fontSize: 13 },
+  typeChipTextActive: { color: '#1a1100', fontWeight: '600' },
+  durationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  skip: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
+  skippedRow: { marginBottom: 24 },
+  skipped: { color: colors.gold, fontSize: 14 },
+  drumRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: DRUM_H,
+    marginBottom: 8,
+  },
+  colon: {
+    color: colors.muted,
+    fontSize: 28,
+    fontWeight: '200',
+    paddingHorizontal: 8,
+    paddingBottom: 4,
+  },
+  drumLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+    paddingHorizontal: 20,
+  },
+  drumLabel: { color: colors.muted, fontSize: 11, letterSpacing: 2 },
+  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 28 },
+  preset: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  presetActive: { backgroundColor: colors.gold, borderColor: colors.gold },
+  presetText: { color: colors.muted, fontSize: 12, letterSpacing: 1 },
+  presetTextActive: { color: '#1a1100', fontWeight: '600' },
+  singleInput: {
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    color: colors.cream,
+    padding: 14,
+    fontSize: 14,
+    marginBottom: 24,
+  },
+  notesInput: {
+    backgroundColor: colors.bg,
+    borderRadius: 8,
+    color: colors.cream,
+    padding: 14,
+    fontSize: 14,
+    lineHeight: 22,
+    minHeight: 80,
+    marginBottom: 24,
+  },
+  modalButtons: { flexDirection: 'row', gap: 12 },
+  cancelBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  cancelBtnText: { color: colors.cream, fontSize: 15, fontWeight: '500' },
+  saveBtn: {
+    flex: 1,
+    backgroundColor: colors.gold,
+    borderRadius: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  saveBtnText: { color: '#1a1100', fontSize: 15, fontWeight: '700' },
+});

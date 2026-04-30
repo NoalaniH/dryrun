@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "DryRun",
+    "slug": "dryrun-app",
+    "scheme": "dryrun",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#100e0b"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.noalani.dryrun",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#100e0b"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9ab86dcf-c464-401b-b11b-652bfac2233e"
+      }
+    }
+  }
+}
