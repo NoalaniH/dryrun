@@ -3,7 +3,6 @@ import type { RoutineBlockType } from '../types/dryRun';
 export type BlockSummary = {
   id: string;
   title: string;
-  type: RoutineBlockType;
   order: number;
   plannedDurationSeconds: number | null;
   actualDurationSeconds: number;

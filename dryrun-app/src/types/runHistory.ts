@@ -1,11 +1,8 @@
-import type { RoutineBlockType } from './dryRun';
-
 export type RunBlockResult = {
   id: string;
   blockId: string;
   libraryItemId?: string;
   title: string;
-  type: RoutineBlockType;
   order: number;
   plannedDurationSeconds: number | null;
   actualDurationSeconds: number;

@@ -12,16 +12,17 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { loadDryRunById, saveDryRun, deleteDryRun } from '../src/storage/dryRunStorage';
 import { getSelectedRunId, getPendingRun, clearPendingRun } from '../src/storage/selectedRunStore';
 import { loadLibrary, saveLibrary } from '../src/storage/libraryStorage';
-import type { DryRun, RoutineBlock, RoutineBlockType, LibraryItem, LibraryItemType } from '../src/types/dryRun';
+import type { DryRun, RoutineBlock, RoutineBlockType, LibraryItem } from '../src/types/dryRun';
 import { colors } from '../src/utils/theme';
 
-const ITEM_H = 54;
-const VISIBLE = 5;
+const ITEM_H = 48;
+const VISIBLE = 3;
 const DRUM_H = ITEM_H * VISIBLE;
 const MINUTES = Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0'));
 const SECONDS = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
@@ -64,7 +65,7 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
-        contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        contentContainerStyle={{ paddingVertical: ITEM_H * Math.floor(VISIBLE / 2) }}
         nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
@@ -88,7 +89,7 @@ const drum = StyleSheet.create({
   textOff: { color: colors.muted },
   highlight: {
     position: 'absolute',
-    top: ITEM_H * 2,
+    top: ITEM_H * Math.floor(VISIBLE / 2),
     left: 0,
     right: 0,
     height: ITEM_H,
@@ -116,6 +117,10 @@ type ModalView = 'closed' | 'picker' | 'create' | 'edit' | 'runInfo';
 export default function BuilderScreen() {
   const router = useRouter();
   const navigation = useNavigation();
+  const mainScrollRef = useRef<ScrollView>(null);
+  const [atBottom, setAtBottom] = useState(false);
+  const [isScrollable, setIsScrollable] = useState(false);
+  const scrollLayoutHeight = useRef(0);
   const [run, setRun] = useState<DryRun | null>(null);
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [modalView, setModalView] = useState<ModalView>('closed');
@@ -123,14 +128,13 @@ export default function BuilderScreen() {
   const [isNewRun, setIsNewRun] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [exitPrompt, setExitPrompt] = useState<'new' | 'dirty' | null>(null);
+  const [discardCreatePrompt, setDiscardCreatePrompt] = useState(false);
   const pendingNavAction = useRef<any>(null);
   const originalRun = useRef<DryRun | null>(null);
-  const [pickerTab, setPickerTab] = useState<'tricks' | 'bits'>('tricks');
   const [modalScrollEnabled, setModalScrollEnabled] = useState(true);
 
   // Create form state (new library item)
   const [newTitle, setNewTitle] = useState('');
-  const [newType, setNewType] = useState<LibraryItemType>('trick');
   const [newDurationMin, setNewDurationMin] = useState(0);
   const [newDurationSec, setNewDurationSec] = useState(0);
   const [newDurationSkipped, setNewDurationSkipped] = useState(false);
@@ -160,6 +164,13 @@ export default function BuilderScreen() {
   const [editCues, setEditCues] = useState('');
   const [editNotes, setEditNotes] = useState('');
 
+  // Collapsible section state (shared — only one form open at a time)
+  const [vibeOpen, setVibeOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [verbiageOpen, setVerbiageOpen] = useState(false);
+  const [cuesOpen, setCuesOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+
   useEffect(() => {
     const pending = getPendingRun();
     if (pending) {
@@ -188,6 +199,11 @@ export default function BuilderScreen() {
           setRun(saved);
         }
       });
+      setVibeOpen(false);
+      setDescriptionOpen(false);
+      setVerbiageOpen(true);
+      setCuesOpen(false);
+      setNotesOpen(false);
     }, [run?.id])
   );
 
@@ -274,13 +290,24 @@ export default function BuilderScreen() {
   }
 
   function openPicker() {
-    setPickerTab('tricks');
     setModalView('picker');
+  }
+
+  function isCreateDirty() {
+    return !!(newTitle || newDescription || newVibe || newVerbiage || newCues || newNotes
+      || newDurationMin > 0 || newDurationSec > 0);
+  }
+
+  function maybeCloseCreate() {
+    if (isCreateDirty()) {
+      setDiscardCreatePrompt(true);
+    } else {
+      setModalView('picker');
+    }
   }
 
   function openCreate() {
     setNewTitle('');
-    setNewType(pickerTab === 'bits' ? 'bit' : 'trick');
     setNewDurationMin(0);
     setNewDurationSec(0);
     setNewDurationSkipped(false);
@@ -289,12 +316,16 @@ export default function BuilderScreen() {
     setNewVerbiage('');
     setNewCues('');
     setNewNotes('');
+    setVibeOpen(false);
+    setDescriptionOpen(false);
+    setVerbiageOpen(true);
+    setCuesOpen(false);
+    setNotesOpen(false);
     setModalView('create');
   }
 
   function openEdit(block: RoutineBlock) {
     setEditTitle(block.title);
-    setEditType(block.type);
     if (block.durationSeconds != null) {
       setEditDurationMin(Math.floor(block.durationSeconds / 60));
       setEditDurationSec(block.durationSeconds % 60);
@@ -308,6 +339,11 @@ export default function BuilderScreen() {
     setEditVerbiage(block.verbiage ?? '');
     setEditCues(block.cues ?? '');
     setEditNotes(block.notes);
+    setVibeOpen(false);
+    setDescriptionOpen(false);
+    setVerbiageOpen(true);
+    setCuesOpen(false);
+    setNotesOpen(false);
     setEditingId(block.id);
     setModalView('edit');
   }
@@ -315,6 +351,11 @@ export default function BuilderScreen() {
   function closeModal() {
     setModalView('closed');
     setEditingId(null);
+    setVibeOpen(false);
+    setDescriptionOpen(false);
+    setVerbiageOpen(true);
+    setCuesOpen(false);
+    setNotesOpen(false);
   }
 
   async function handleAddFromLibrary(item: LibraryItem) {
@@ -322,7 +363,6 @@ export default function BuilderScreen() {
     const block: RoutineBlock = {
       id: Date.now().toString(),
       title: item.title,
-      type: item.type,
       durationSeconds: item.defaultDurationSeconds,
       notes: item.notes,
       vibe: item.defaultVibe,
@@ -338,29 +378,6 @@ export default function BuilderScreen() {
     };
     setRun(updated);
     setIsNewRun(false);
-    setIsDirty(true);
-    closeModal();
-    await saveDryRun(updated);
-  }
-
-  async function handleQuickAdd() {
-    if (!run) return;
-    const block: RoutineBlock = {
-      id: Date.now().toString(),
-      title: 'Custom block',
-      type: 'custom',
-      durationSeconds: null,
-      notes: '',
-      order: run.blocks.length,
-    };
-    const updated: DryRun = {
-      ...run,
-      blocks: [...run.blocks, block],
-      updatedAt: new Date().toISOString(),
-    };
-    setRun(updated);
-    setIsNewRun(false);
-    setIsDirty(true);
     closeModal();
     await saveDryRun(updated);
   }
@@ -373,7 +390,6 @@ export default function BuilderScreen() {
     const item: LibraryItem = {
       id: itemId,
       title: newTitle.trim(),
-      type: newType,
       defaultDurationSeconds: newDuration,
       description: newDescription.trim(),
       defaultVibe: newVibe.trim() || undefined,
@@ -386,7 +402,6 @@ export default function BuilderScreen() {
     const block: RoutineBlock = {
       id: `blk_${Date.now()}`,
       title: item.title,
-      type: item.type,
       durationSeconds: item.defaultDurationSeconds,
       notes: item.notes,
       vibe: item.defaultVibe,
@@ -404,7 +419,6 @@ export default function BuilderScreen() {
     setLibrary(updatedLib);
     setRun(updatedRun);
     setIsNewRun(false);
-    setIsDirty(true);
     closeModal();
     await Promise.all([saveLibrary(updatedLib), saveDryRun(updatedRun)]);
   }
@@ -440,7 +454,6 @@ export default function BuilderScreen() {
       .map((b, i) => ({ ...b, order: i }));
     const updated: DryRun = { ...run, blocks, updatedAt: new Date().toISOString() };
     setRun(updated);
-    setIsDirty(true);
     await saveDryRun(updated);
   }
 
@@ -455,7 +468,6 @@ export default function BuilderScreen() {
     const blocks = next.map((b, i) => ({ ...b, order: i }));
     const updated: DryRun = { ...run, blocks, updatedAt: new Date().toISOString() };
     setRun(updated);
-    setIsDirty(true);
     await saveDryRun(updated);
   }
 
@@ -469,22 +481,35 @@ export default function BuilderScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={handleExit}>
+        <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.back}>‹</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>ACT BUILDER</Text>
         <TouchableOpacity
-          onPress={handleExit}
+          onPress={() => router.back()}
           hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
         >
           <Text style={styles.closeBtn}>✕</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={mainScrollRef}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onLayout={(e) => { scrollLayoutHeight.current = e.nativeEvent.layout.height; }}
+        onContentSizeChange={(_, contentHeight) => {
+          setIsScrollable(contentHeight > scrollLayoutHeight.current);
+        }}
+        onScroll={(e) => {
+          const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          setAtBottom(contentOffset.y + layoutMeasurement.height >= contentSize.height - 20);
+        }}
+      >
         <TouchableOpacity onPress={openRunInfo} style={styles.runInfoTouchable}>
           <Text style={styles.runTitle}>{run.title}</Text>
-          <Text style={styles.runInfoHint}>✎</Text>
+          <Feather name="edit-2" size={18} color={colors.cream} style={{ marginTop: 10 }} />
         </TouchableOpacity>
 
         {/* Time summary */}
@@ -529,14 +554,11 @@ export default function BuilderScreen() {
                 <View style={styles.blockInfo}>
                   <Text style={styles.blockTitle}>{block.title}</Text>
                   <View style={styles.blockMeta}>
-                    <Text style={styles.blockType}>{block.type.toUpperCase()}</Text>
+                    <Text style={styles.blockType}>DURATION</Text>
                     {block.durationSeconds != null && (
                       <Text style={styles.blockDuration}>
                         {formatMinSec(block.durationSeconds)}
                       </Text>
-                    )}
-                    {block.libraryItemId != null && (
-                      <Text style={styles.libraryBadge}>◈ LIB</Text>
                     )}
                   </View>
                   {block.vibe ? (
@@ -579,6 +601,22 @@ export default function BuilderScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* Scroll arrow */}
+      {isScrollable && (
+        <TouchableOpacity
+          style={styles.scrollArrow}
+          onPress={() => {
+            if (atBottom) {
+              mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+            } else {
+              mainScrollRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+        >
+          <Feather name={atBottom ? 'arrow-up' : 'arrow-down'} size={18} color={colors.cream} />
+        </TouchableOpacity>
+      )}
 
       {/* Footer */}
       <View style={styles.footer}>
@@ -787,48 +825,32 @@ export default function BuilderScreen() {
                 {modalView === 'picker'
                   ? 'ADD BLOCK'
                   : modalView === 'create'
-                  ? `NEW ${newType.toUpperCase()}`
+                  ? 'NEW BLOCK'
                   : 'EDIT BLOCK'}
               </Text>
               <TouchableOpacity
-                onPress={modalView === 'create' ? () => setModalView('picker') : closeModal}
+                onPress={modalView === 'create' ? maybeCloseCreate : closeModal}
                 hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               >
                 <Text style={styles.fullScreenClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.blockFormContent} showsVerticalScrollIndicator={false}>
 
               {/* ── PICKER: select from library or choose action ── */}
               {modalView === 'picker' && (
                 <>
-                  {/* Tab bar */}
-                  <View style={styles.pickerTabs}>
-                    {(['tricks', 'bits'] as const).map((tab) => (
-                      <TouchableOpacity
-                        key={tab}
-                        style={[styles.pickerTab, pickerTab === tab && styles.pickerTabActive]}
-                        onPress={() => setPickerTab(tab)}
-                      >
-                        <Text style={[styles.pickerTabText, pickerTab === tab && styles.pickerTabTextActive]}>
-                          {tab.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
                   <TouchableOpacity onPress={openCreate} style={styles.pickerNewLink}>
                     <Text style={styles.pickerNewLinkText}>+ New</Text>
                   </TouchableOpacity>
 
-                  {/* Filtered library items */}
-                  {library.filter((i) => i.type === (pickerTab === 'tricks' ? 'trick' : 'bit')).length === 0 ? (
+                  {/* Library items */}
+                  {library.length === 0 ? (
                     <Text style={styles.emptyLibrary}>
-                      {`No ${pickerTab} in your library yet.`}
+                      No bits in your library yet.
                     </Text>
                   ) : (
                     library
-                      .filter((i) => i.type === (pickerTab === 'tricks' ? 'trick' : 'bit'))
                       .map((item) => (
                         <TouchableOpacity
                           key={item.id}
@@ -852,7 +874,7 @@ export default function BuilderScreen() {
 
               {/* ── CREATE: new library item ── */}
               {modalView === 'create' && (
-                <>
+                <View style={styles.blockFormInner}>
                   <TextInput
                     style={styles.sheetInput}
                     placeholder="Title"
@@ -923,80 +945,101 @@ export default function BuilderScreen() {
                     </>
                   )}
 
-                  <Text style={[styles.sectionLabel, { marginTop: 24 }]}>DESCRIPTION</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="What is this trick or bit about?"
-                    placeholderTextColor={colors.muted}
-                    value={newDescription}
-                    onChangeText={setNewDescription}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setDescriptionOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>DESCRIPTION</Text>
+                    <Feather name={descriptionOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {descriptionOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="What is this bit about?"
+                      placeholderTextColor={colors.muted}
+                      value={newDescription}
+                      onChangeText={setNewDescription}
+                      multiline
+                      numberOfLines={3}
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>VIBE</Text>
-                  <TextInput
-                    style={styles.singleInput}
-                    placeholder="e.g. dark, slow build, playful"
-                    placeholderTextColor={colors.muted}
-                    value={newVibe}
-                    onChangeText={setNewVibe}
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVibeOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>VIBE</Text>
+                    <Feather name={vibeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {vibeOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="e.g. dark, slow build, playful"
+                      placeholderTextColor={colors.muted}
+                      value={newVibe}
+                      onChangeText={setNewVibe}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>VERBIAGE</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Full script or phrasing..."
-                    placeholderTextColor={colors.muted}
-                    value={newVerbiage}
-                    onChangeText={setNewVerbiage}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVerbiageOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>VERBIAGE</Text>
+                    <Feather name={verbiageOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {verbiageOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 140 }]}
+                      placeholder="Full script or phrasing..."
+                      placeholderTextColor={colors.muted}
+                      value={newVerbiage}
+                      onChangeText={setNewVerbiage}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>CUES</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Keyword cues, one per line (e.g. reach for hat)"
-                    placeholderTextColor={colors.muted}
-                    value={newCues}
-                    onChangeText={setNewCues}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setCuesOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>CUES</Text>
+                    <Feather name={cuesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {cuesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                      placeholderTextColor={colors.muted}
+                      value={newCues}
+                      onChangeText={setNewCues}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>NOTES</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Setup, props, private reminders..."
-                    placeholderTextColor={colors.muted}
-                    value={newNotes}
-                    onChangeText={setNewNotes}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setNotesOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>NOTES</Text>
+                    <Feather name={notesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {notesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Setup, props, private reminders..."
+                      placeholderTextColor={colors.muted}
+                      value={newNotes}
+                      onChangeText={setNewNotes}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
                   <View style={styles.modalButtons}>
-                    <TouchableOpacity
-                      style={styles.cancelBtn}
-                      onPress={() => setModalView('picker')}
-                    >
+                    <TouchableOpacity style={styles.cancelBtn} onPress={maybeCloseCreate}>
                       <Text style={styles.cancelBtnText}>Back</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.saveBtn} onPress={handleCreateNew}>
                       <Text style={styles.saveBtnText}>Save & Add</Text>
                     </TouchableOpacity>
                   </View>
-                </>
+                </View>
               )}
 
               {/* ── EDIT: modify a routine block (does not update library) ── */}
               {modalView === 'edit' && (
-                <>
+                <View style={styles.blockFormInner}>
                   <TextInput
                     style={styles.sheetInput}
                     placeholder="Block title"
@@ -1067,50 +1110,86 @@ export default function BuilderScreen() {
                     </>
                   )}
 
-                  <Text style={[styles.sectionLabel, { marginTop: 24 }]}>VIBE</Text>
-                  <TextInput
-                    style={styles.singleInput}
-                    placeholder="e.g. dark, slow build, playful"
-                    placeholderTextColor={colors.muted}
-                    value={editVibe}
-                    onChangeText={setEditVibe}
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setDescriptionOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>DESCRIPTION</Text>
+                    <Feather name={descriptionOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {descriptionOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="What is this bit about?"
+                      placeholderTextColor={colors.muted}
+                      value={newDescription}
+                      onChangeText={setNewDescription}
+                      multiline
+                      numberOfLines={3}
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>VERBIAGE</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Full script or phrasing..."
-                    placeholderTextColor={colors.muted}
-                    value={editVerbiage}
-                    onChangeText={setEditVerbiage}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVibeOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>VIBE</Text>
+                    <Feather name={vibeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {vibeOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="e.g. dark, slow build, playful"
+                      placeholderTextColor={colors.muted}
+                      value={editVibe}
+                      onChangeText={setEditVibe}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>CUES</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Keyword cues, one per line (e.g. reach for hat)"
-                    placeholderTextColor={colors.muted}
-                    value={editCues}
-                    onChangeText={setEditCues}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVerbiageOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>VERBIAGE</Text>
+                    <Feather name={verbiageOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {verbiageOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 140 }]}
+                      placeholder="Full script or phrasing..."
+                      placeholderTextColor={colors.muted}
+                      value={editVerbiage}
+                      onChangeText={setEditVerbiage}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
-                  <Text style={styles.sectionLabel}>NOTES</Text>
-                  <TextInput
-                    style={styles.notesInput}
-                    placeholder="Setup, props, private reminders..."
-                    placeholderTextColor={colors.muted}
-                    value={editNotes}
-                    onChangeText={setEditNotes}
-                    multiline
-                    numberOfLines={3}
-                    textAlignVertical="top"
-                  />
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setCuesOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>CUES</Text>
+                    <Feather name={cuesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {cuesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                      placeholderTextColor={colors.muted}
+                      value={editCues}
+                      onChangeText={setEditCues}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setNotesOpen(o => !o)}>
+                    <Text style={styles.sectionLabel}>NOTES</Text>
+                    <Feather name={notesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {notesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Setup, props, private reminders..."
+                      placeholderTextColor={colors.muted}
+                      value={editNotes}
+                      onChangeText={setEditNotes}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
 
                   <View style={styles.modalButtons}>
                     <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
@@ -1120,9 +1199,33 @@ export default function BuilderScreen() {
                       <Text style={styles.saveBtnText}>Save</Text>
                     </TouchableOpacity>
                   </View>
-                </>
+                </View>
               )}
             </ScrollView>
+
+            {/* Discard new block prompt — rendered inside the modal to avoid iOS stacking issue */}
+            {discardCreatePrompt && (
+              <View style={[styles.exitOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+                <View style={styles.exitCard}>
+                  <Text style={styles.exitTitle}>Discard bit?</Text>
+                  <Text style={styles.exitBody}>
+                    This bit hasn't been saved. Going back will lose what you've entered.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.exitDiscardBtn}
+                    onPress={() => { setDiscardCreatePrompt(false); setModalView('picker'); }}
+                  >
+                    <Text style={styles.exitDiscardBtnText}>Discard</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.exitCancelBtn}
+                    onPress={() => setDiscardCreatePrompt(false)}
+                  >
+                    <Text style={styles.exitCancelBtnText}>Keep editing</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -1150,12 +1253,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     marginBottom: 12,
-  },
-  runInfoHint: {
-    color: colors.gold,
-    fontSize: 22,
-    fontWeight: '600',
-    marginTop: 6,
   },
   runTitle: {
     color: colors.cream,
@@ -1256,6 +1353,19 @@ const styles = StyleSheet.create({
   iconBtnText: { color: colors.muted, fontSize: 18 },
   addMore: { paddingVertical: 20, alignItems: 'center' },
   addMoreText: { color: colors.gold, fontSize: 14, letterSpacing: 1 },
+  scrollArrow: {
+    position: 'absolute',
+    right: 24,
+    bottom: 116,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 16 },
   startButton: {
     backgroundColor: colors.gold,
@@ -1280,6 +1390,8 @@ const styles = StyleSheet.create({
   },
   fullScreenClose: { color: colors.muted, fontSize: 18 },
   formContent: { paddingHorizontal: 24, paddingBottom: 40 },
+  blockFormContent: { paddingHorizontal: 24, paddingBottom: 40, flexGrow: 1 },
+  blockFormInner: { flex: 1, justifyContent: 'space-between' },
   sheetHeading: {
     color: colors.muted,
     fontSize: 11,
@@ -1287,9 +1399,8 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     color: colors.muted,
-    fontSize: 11,
-    letterSpacing: 2,
-    marginBottom: 12,
+    fontSize: 14,
+    letterSpacing: 2
   },
   sheetInput: {
     color: colors.cream,
@@ -1397,8 +1508,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   skip: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
-  skippedRow: { marginBottom: 24 },
-  skipped: { color: colors.gold, fontSize: 14 },
+  skippedRow: { marginBottom: 24, alignItems: 'center' },
+  skipped: { color: colors.gold, fontSize: 14, textAlign: 'center' },
   drumRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1443,12 +1554,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     color: colors.cream,
     padding: 14,
+    paddingTop: 10,
     fontSize: 14,
     lineHeight: 22,
     minHeight: 80,
     marginBottom: 24,
   },
+  collapsibleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginBottom: 4,
+  },
   modalButtons: { flexDirection: 'row', gap: 12 },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+    paddingTop: 16,
+    backgroundColor: colors.bg,
+  },
   cancelBtn: {
     flex: 1,
     borderWidth: 1,

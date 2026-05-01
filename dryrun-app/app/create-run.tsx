@@ -14,8 +14,8 @@ import { setPendingRun } from '../src/storage/selectedRunStore';
 import type { DryRun } from '../src/types/dryRun';
 import { colors } from '../src/utils/theme';
 
-const ITEM_H = 54;
-const VISIBLE = 5;
+const ITEM_H = 48;
+const VISIBLE = 3;
 const DRUM_H = ITEM_H * VISIBLE;
 
 const MINUTES = Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0'));
@@ -59,7 +59,7 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
-        contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        contentContainerStyle={{ paddingVertical: ITEM_H * Math.floor(VISIBLE / 2) }}
         nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
@@ -96,7 +96,7 @@ const drum = StyleSheet.create({
   textOff: { color: colors.muted },
   highlight: {
     position: 'absolute',
-    top: ITEM_H * 2,
+    top: ITEM_H * Math.floor(VISIBLE / 2),
     left: 0,
     right: 0,
     height: ITEM_H,
@@ -189,7 +189,49 @@ export default function CreateRunScreen() {
         </View>
       </View>
 
-      {/* Prompter settings — above the drum so they never overlap */}
+      {/* Drum and presets live outside any ScrollView */}
+      {skipped ? (
+        <TouchableOpacity style={styles.skippedArea} onPress={() => setSkipped(false)}>
+          <Text style={styles.skipped}>Tap to set duration</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.below}>
+          <View style={styles.pickerRow}>
+            <DrumColumn
+              values={MINUTES}
+              selectedIndex={durationMinutes}
+              onSelect={setDurationMinutes}
+            />
+            <Text style={styles.colon}>:</Text>
+            <DrumColumn
+              values={SECONDS}
+              selectedIndex={durationSeconds}
+              onSelect={setDurationSeconds}
+            />
+          </View>
+
+          <View style={styles.pickerLabels}>
+            <Text style={styles.pickerLabel}>MIN</Text>
+            <Text style={styles.pickerLabel}>SEC</Text>
+          </View>
+
+          <View style={styles.presetRow}>
+            {PRESETS.map((m) => (
+              <TouchableOpacity
+                key={m}
+                style={[styles.preset, presetActive(m) && styles.presetActive]}
+                onPress={() => applyPreset(m)}
+              >
+                <Text style={[styles.presetText, presetActive(m) && styles.presetTextActive]}>
+                  {m} MIN
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Prompter settings — below the drum */}
       <View style={styles.prompterSection}>
         <View style={styles.toggleRow}>
           <Text style={styles.label}>PROMPTER</Text>
@@ -241,48 +283,6 @@ export default function CreateRunScreen() {
           </>
         )}
       </View>
-
-      {/* Drum and presets live outside any ScrollView */}
-      {skipped ? (
-        <TouchableOpacity style={styles.skippedArea} onPress={() => setSkipped(false)}>
-          <Text style={styles.skipped}>Tap to set duration</Text>
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.below}>
-          <View style={styles.pickerRow}>
-            <DrumColumn
-              values={MINUTES}
-              selectedIndex={durationMinutes}
-              onSelect={setDurationMinutes}
-            />
-            <Text style={styles.colon}>:</Text>
-            <DrumColumn
-              values={SECONDS}
-              selectedIndex={durationSeconds}
-              onSelect={setDurationSeconds}
-            />
-          </View>
-
-          <View style={styles.pickerLabels}>
-            <Text style={styles.pickerLabel}>MIN</Text>
-            <Text style={styles.pickerLabel}>SEC</Text>
-          </View>
-
-          <View style={styles.presetRow}>
-            {PRESETS.map((m) => (
-              <TouchableOpacity
-                key={m}
-                style={[styles.preset, presetActive(m) && styles.presetActive]}
-                onPress={() => applyPreset(m)}
-              >
-                <Text style={[styles.presetText, presetActive(m) && styles.presetTextActive]}>
-                  {m} MIN
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
 
       <View style={styles.footer}>
         <TouchableOpacity style={styles.button} onPress={handleSubmit}>
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
   },
   skip: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
   skippedArea: {
-    flex: 1,
+    height: DRUM_H + 40,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -439,6 +439,6 @@ const styles = StyleSheet.create({
   masterToggleOn: { backgroundColor: colors.gold, borderColor: colors.gold },
   masterToggleText: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
   masterToggleTextOn: { color: '#1a1100', fontWeight: '600' },
-  prompterSection: { paddingHorizontal: 28 },
+  prompterSection: { paddingHorizontal: 28, marginTop: 24 },
   scrollContent: { flexGrow: 1 },
 });

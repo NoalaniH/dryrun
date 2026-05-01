@@ -36,6 +36,33 @@ export default function DryRunScreen() {
   const autoScrollAnim = useRef(new Animated.Value(0)).current;
   const autoScrollAnimation = useRef<Animated.CompositeAnimation | null>(null);
 
+  // Blink animation for over-time clock
+  const blinkAnim = useRef(new Animated.Value(1)).current;
+  const blinkAnimation = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    const currentBlock = run?.blocks[blockIndex];
+    const dur = currentBlock?.durationSeconds;
+    const isOver = dur != null && dur > 0 && blockElapsed >= dur;
+    if (isOver && !paused) {
+      if (blinkAnimation.current) return;
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(blinkAnim, { toValue: 0.15, duration: 500, useNativeDriver: true }),
+          Animated.timing(blinkAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
+        ])
+      );
+      blinkAnimation.current = loop;
+      loop.start();
+    } else {
+      if (blinkAnimation.current) {
+        blinkAnimation.current.stop();
+        blinkAnimation.current = null;
+      }
+      blinkAnim.setValue(1);
+    }
+  }, [blockElapsed, blockIndex, paused, run]);
+
   useEffect(() => {
     const runId = getSelectedRunId();
     (runId ? loadDryRunById(runId) : Promise.resolve(null)).then((r) => {
@@ -124,6 +151,11 @@ export default function DryRunScreen() {
       autoScrollAnimation.current.stop();
       autoScrollAnimation.current = null;
     }
+    if (blinkAnimation.current) {
+      blinkAnimation.current.stop();
+      blinkAnimation.current = null;
+    }
+    blinkAnim.setValue(1);
     autoScrollAnim.setValue(0);
     setBlockIndex(nextIndex);
     setBlockElapsed(0);
@@ -143,6 +175,7 @@ export default function DryRunScreen() {
   function handleEnd() {
     if (interval.current) clearInterval(interval.current);
     if (autoScrollAnimation.current) autoScrollAnimation.current.stop();
+    if (blinkAnimation.current) blinkAnimation.current.stop();
     router.back();
   }
 
@@ -150,6 +183,7 @@ export default function DryRunScreen() {
     if (!run) return;
     if (interval.current) clearInterval(interval.current);
     if (autoScrollAnimation.current) autoScrollAnimation.current.stop();
+    if (blinkAnimation.current) blinkAnimation.current.stop();
     blockResults.current.set(run.blocks[blockIndex].id, blockElapsed);
 
     const endedAt = new Date().toISOString();
@@ -160,7 +194,6 @@ export default function DryRunScreen() {
       blockId: block.id,
       libraryItemId: block.libraryItemId,
       title: block.title,
-      type: block.type,
       order: block.order,
       plannedDurationSeconds: block.durationSeconds,
       actualDurationSeconds: blockResults.current.get(block.id)!,
@@ -185,7 +218,6 @@ export default function DryRunScreen() {
       blocks: completedBlocks.map((block) => ({
         id: block.id,
         title: block.title,
-        type: block.type,
         order: block.order,
         plannedDurationSeconds: block.durationSeconds,
         actualDurationSeconds: blockResults.current.get(block.id)!,
@@ -233,7 +265,7 @@ export default function DryRunScreen() {
               style={styles.promptToggle}
             >
               <Text style={[styles.promptToggleText, teleprompter && styles.promptToggleOn]}>
-                PROMPT
+                PROMPT {teleprompter ? 'ON' : 'OFF'}
               </Text>
             </TouchableOpacity>
           )}
@@ -249,8 +281,29 @@ export default function DryRunScreen() {
       {teleprompter && hasPromptText ? (
         /* ── Teleprompter mode ── */
         <View style={styles.main}>
-          <Text style={styles.blockTitleSmall} numberOfLines={1}>{block.title}</Text>
-          {block.vibe ? <Text style={styles.vibeSmall}>{block.vibe}</Text> : null}
+          <Animated.Text style={[styles.clock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
+          <Text style={styles.runTimer}>RUN  {formatClock(runElapsed)}</Text>
+
+          {progress !== null ? (
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+            </View>
+          ) : (
+            <View style={styles.progressTrackEmpty} />
+          )}
+          {/* Timers always on top */}
+          {/* <View style={styles.compactTimers}>
+            <Animated.Text style={[styles.compactClock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
+            <Text style={styles.compactRun}>RUN  {formatClock(runElapsed)}</Text>
+          </View>
+
+          {progress !== null ? (
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+            </View>
+          ) : (
+            <View style={styles.progressTrackEmpty} />
+          )} */}
 
           {effectiveAdvance === 'manual' ? (
             /* Manual: show all text in a scrollable area */
@@ -274,41 +327,11 @@ export default function DryRunScreen() {
             </ScrollView>
           )}
 
-          {/* Compact timers */}
-          <View style={styles.compactTimers}>
-            <Text style={styles.compactClock}>{formatClock(blockElapsed)}</Text>
-            <Text style={styles.compactRun}>RUN  {formatClock(runElapsed)}</Text>
-          </View>
-
-          {progress !== null ? (
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-            </View>
-          ) : (
-            <View style={styles.progressTrackEmpty} />
-          )}
         </View>
       ) : (
         /* ── Normal mode ── */
         <View style={styles.main}>
-          <Text style={styles.nowLabel}>● NOW</Text>
-
-          <Text style={styles.blockTitle} numberOfLines={2}>{block.title}</Text>
-          <Text style={styles.blockType}>{block.type.toUpperCase()}</Text>
-
-          {block.vibe ? (
-            <Text style={styles.vibe} numberOfLines={1}>{block.vibe}</Text>
-          ) : null}
-
-          {block.verbiage ? (
-            <Text style={styles.verbiage} numberOfLines={4}>{block.verbiage}</Text>
-          ) : null}
-
-          {block.notes ? (
-            <Text style={styles.notes} numberOfLines={2}>{block.notes}</Text>
-          ) : null}
-
-          <Text style={styles.clock}>{formatClock(blockElapsed)}</Text>
+          <Animated.Text style={[styles.clock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
           <Text style={styles.runTimer}>RUN  {formatClock(runElapsed)}</Text>
 
           {progress !== null ? (
@@ -318,6 +341,15 @@ export default function DryRunScreen() {
           ) : (
             <View style={styles.progressTrackEmpty} />
           )}
+
+          <ScrollView
+              style={styles.manualScroll}
+              contentContainerStyle={styles.manualScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+            <Text style={styles.blockTitle} numberOfLines={2}>{block.title}</Text>
+          </ScrollView>
+
         </View>
       )}
 
@@ -366,13 +398,9 @@ const styles = StyleSheet.create({
   counter: { color: colors.muted, fontSize: 12, letterSpacing: 2 },
   holdBtn: { color: colors.muted, fontSize: 12, letterSpacing: 1.5 },
   promptToggle: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
   },
-  promptToggleText: { color: colors.muted, fontSize: 10, letterSpacing: 1.5 },
+  promptToggleText: { color: colors.muted, fontSize: 12, letterSpacing: 1.5 },
   promptToggleOn: { color: colors.gold },
   // ── Normal mode ──
   main: {
@@ -396,10 +424,11 @@ const styles = StyleSheet.create({
     lineHeight: 42,
   },
   blockType: {
-    color: colors.muted,
-    fontSize: 11,
+    color: colors.cream,
+    fontSize: 14,
     letterSpacing: 3,
     marginBottom: 12,
+    textAlign: 'center',
   },
   vibe: {
     color: colors.gold,
@@ -437,8 +466,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   runTimer: {
-    color: colors.muted,
-    fontSize: 12,
+    color: colors.cream,
+    fontSize: 16,
     letterSpacing: 2.5,
     fontVariant: ['tabular-nums'],
     marginBottom: 28,
@@ -465,8 +494,8 @@ const styles = StyleSheet.create({
   },
   manualScrollContent: {
     flexGrow: 1,
-    justifyContent: 'flex-end',
-    paddingBottom: 16,
+    justifyContent: 'center',
+    paddingVertical: 16,
   },
   manualText: {
     color: colors.cream,
@@ -494,19 +523,19 @@ const styles = StyleSheet.create({
   compactTimers: {
     alignItems: 'center',
     gap: 4,
-    marginTop: 12,
-    marginBottom: 12,
+    marginTop: 8,
+    marginBottom: 16,
   },
   compactClock: {
     color: colors.cream,
-    fontSize: 28,
+    fontSize: 64,
     fontWeight: '200',
-    letterSpacing: 3,
+    letterSpacing: 4,
     fontVariant: ['tabular-nums'],
   },
   compactRun: {
-    color: colors.muted,
-    fontSize: 11,
+    color: colors.cream,
+    fontSize: 16,
     letterSpacing: 2.5,
     fontVariant: ['tabular-nums'],
   },

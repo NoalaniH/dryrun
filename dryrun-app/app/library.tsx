@@ -14,15 +14,16 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { loadLibrary, saveLibrary } from '../src/storage/libraryStorage';
 import { loadAllDryRuns, deleteDryRun } from '../src/storage/dryRunStorage';
 import { setSelectedRunId } from '../src/storage/selectedRunStore';
-import type { LibraryItem, LibraryItemType, DryRun } from '../src/types/dryRun';
+import type { LibraryItem, DryRun } from '../src/types/dryRun';
 import { colors } from '../src/utils/theme';
 
-const ITEM_H = 54;
-const VISIBLE = 5;
+const ITEM_H = 48;
+const VISIBLE = 3;
 const DRUM_H = ITEM_H * VISIBLE;
 const MINUTES = Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0'));
 const SECONDS = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
@@ -65,7 +66,7 @@ function DrumColumn({ values, selectedIndex, onSelect }: DrumProps) {
         scrollEventThrottle={16}
         onMomentumScrollEnd={settle}
         onScrollEndDrag={settle}
-        contentContainerStyle={{ paddingVertical: ITEM_H * 2 }}
+        contentContainerStyle={{ paddingVertical: ITEM_H * Math.floor(VISIBLE / 2) }}
         nestedScrollEnabled={false}
       >
         {values.map((v, i) => (
@@ -89,7 +90,7 @@ const drum = StyleSheet.create({
   textOff: { color: colors.muted },
   highlight: {
     position: 'absolute',
-    top: ITEM_H * 2,
+    top: ITEM_H * Math.floor(VISIBLE / 2),
     left: 0,
     right: 0,
     height: ITEM_H,
@@ -191,7 +192,7 @@ const swipe = StyleSheet.create({
   deleteTxt: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.5 },
 });
 
-type LibraryTab = 'runs' | 'tricks' | 'bits';
+type LibraryTab = 'runs' | 'bits';
 type ModalMode = 'closed' | 'add' | 'edit';
 type DeleteTarget =
   | { kind: 'run'; run: DryRun }
@@ -200,15 +201,19 @@ type DeleteTarget =
 
 export default function LibraryScreen() {
   const router = useRouter();
+  const mainScrollRef = useRef<ScrollView>(null);
+  const [atBottom, setAtBottom] = useState(false);
+  const [isScrollable, setIsScrollable] = useState(false);
+  const scrollLayoutHeight = useRef(0);
   const [library, setLibrary] = useState<LibraryItem[]>([]);
   const [runs, setRuns] = useState<DryRun[]>([]);
   const [tab, setTab] = useState<LibraryTab>('runs');
   const [modalMode, setModalMode] = useState<ModalMode>('closed');
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+  const [discardAddPrompt, setDiscardAddPrompt] = useState(false);
 
   const [title, setTitle] = useState('');
-  const [type, setType] = useState<LibraryItemType>('trick');
   const [durationMin, setDurationMin] = useState(0);
   const [durationSec, setDurationSec] = useState(0);
   const [durationSkipped, setDurationSkipped] = useState(false);
@@ -218,6 +223,13 @@ export default function LibraryScreen() {
   const [verbiage, setVerbiage] = useState('');
   const [cues, setCues] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Collapsible section state
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const [vibeOpen, setVibeOpen] = useState(false);
+  const [verbiageOpen, setVerbiageOpen] = useState(true);
+  const [cuesOpen, setCuesOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   useEffect(() => {
     loadLibrary().then(setLibrary);
@@ -231,10 +243,22 @@ export default function LibraryScreen() {
     }, [])
   );
 
+  function isAddDirty() {
+    return !!(title || description || vibe || verbiage || cues || notes
+      || durationMin > 0 || durationSec > 0);
+  }
+
+  function maybeCloseAdd() {
+    if (isAddDirty()) {
+      setDiscardAddPrompt(true);
+    } else {
+      setModalMode('closed');
+    }
+  }
+
   function openAdd() {
     setEditingItem(null);
     setTitle('');
-    setType(tab === 'bits' ? 'bit' : 'trick'); // 'runs' tab falls through to 'trick'
     setDurationMin(0);
     setDurationSec(0);
     setDurationSkipped(false);
@@ -243,13 +267,17 @@ export default function LibraryScreen() {
     setVerbiage('');
     setCues('');
     setNotes('');
+    setDescriptionOpen(false);
+    setVibeOpen(false);
+    setVerbiageOpen(true);
+    setCuesOpen(false);
+    setNotesOpen(false);
     setModalMode('add');
   }
 
   function openEdit(item: LibraryItem) {
     setEditingItem(item);
     setTitle(item.title);
-    setType(item.type);
     if (item.defaultDurationSeconds != null) {
       setDurationMin(Math.floor(item.defaultDurationSeconds / 60));
       setDurationSec(item.defaultDurationSeconds % 60);
@@ -264,6 +292,11 @@ export default function LibraryScreen() {
     setVerbiage(item.defaultVerbiage ?? '');
     setCues(item.defaultCues ?? '');
     setNotes(item.notes);
+    setDescriptionOpen(!!(item.description));
+    setVibeOpen(!!(item.defaultVibe));
+    setVerbiageOpen(true);
+    setCuesOpen(!!(item.defaultCues));
+    setNotesOpen(!!(item.notes));
     setModalMode('edit');
   }
 
@@ -297,7 +330,6 @@ export default function LibraryScreen() {
       const edited: LibraryItem = {
         ...editingItem,
         title: title.trim(),
-        type,
         defaultDurationSeconds,
         description: description.trim(),
         defaultVibe: vibe.trim() || undefined,
@@ -311,7 +343,6 @@ export default function LibraryScreen() {
       const item: LibraryItem = {
         id: `lib_${Date.now()}`,
         title: title.trim(),
-        type,
         defaultDurationSeconds,
         description: description.trim(),
         defaultVibe: vibe.trim() || undefined,
@@ -334,7 +365,7 @@ export default function LibraryScreen() {
     setDeleteTarget({ kind: 'item', item: editingItem });
   }
 
-  const tabItems = library.filter((i) => i.type === (tab === 'tricks' ? 'trick' : 'bit'));
+  const tabItems = library;
 
   return (
     <View style={styles.container}>
@@ -346,10 +377,23 @@ export default function LibraryScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={mainScrollRef}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onLayout={(e) => { scrollLayoutHeight.current = e.nativeEvent.layout.height; }}
+        onContentSizeChange={(_, contentHeight) => {
+          setIsScrollable(contentHeight > scrollLayoutHeight.current);
+        }}
+        onScroll={(e) => {
+          const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
+          setAtBottom(contentOffset.y + layoutMeasurement.height >= contentSize.height - 20);
+        }}
+      >
         {/* Tabs */}
         <View style={styles.tabs}>
-          {(['runs', 'tricks', 'bits'] as LibraryTab[]).map((t) => (
+          {(['runs', 'bits'] as LibraryTab[]).map((t) => (
             <TouchableOpacity
               key={t}
               style={[styles.tab, tab === t && styles.tabActive]}
@@ -393,10 +437,10 @@ export default function LibraryScreen() {
           )
         )}
 
-        {/* Tricks / Bits tab */}
+        {/* Bits tab */}
         {tab !== 'runs' && (
           tabItems.length === 0 ? (
-            <Text style={styles.emptyTab}>{`No ${tab} in your library yet.`}</Text>
+            <Text style={styles.emptyTab}>No bits in your library yet.</Text>
           ) : (
             tabItems.map((item) => (
               <SwipeableRow key={item.id} onDelete={() => setDeleteTarget({ kind: 'item', item })}>
@@ -430,6 +474,22 @@ export default function LibraryScreen() {
         )}
       </ScrollView>
 
+      {/* Scroll arrow */}
+      {isScrollable && (
+        <TouchableOpacity
+          style={styles.scrollArrow}
+          onPress={() => {
+            if (atBottom) {
+              mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+            } else {
+              mainScrollRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+        >
+          <Feather name={atBottom ? 'arrow-up' : 'arrow-down'} size={18} color={colors.cream} />
+        </TouchableOpacity>
+      )}
+
       {/* Add / Edit modal — full screen */}
       <Modal visible={modalMode !== 'closed'} animationType="slide">
         <View style={styles.fullScreen}>
@@ -439,140 +499,193 @@ export default function LibraryScreen() {
           >
             <View style={styles.fullScreenHeader}>
               <Text style={styles.sheetHeading}>
-                {modalMode === 'edit' ? `EDIT ${type.toUpperCase()}` : `NEW ${type.toUpperCase()}`}
+                {modalMode === 'edit' ? `EDIT BIT` : `NEW BIT`}
               </Text>
               <TouchableOpacity
-                onPress={() => setModalMode('closed')}
+                onPress={modalMode === 'add' ? maybeCloseAdd : () => setModalMode('closed')}
                 hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               >
                 <Text style={styles.fullScreenClose}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
-              <TextInput
-                style={styles.sheetInput}
-                placeholder="Title"
-                placeholderTextColor={colors.muted}
-                value={title}
-                onChangeText={setTitle}
-                autoFocus={modalMode === 'add'}
-              />
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.blockFormContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
+              <View style={styles.blockFormInner}>
+                <View>
+                  <TextInput
+                    style={styles.sheetInput}
+                    placeholder="Title"
+                    placeholderTextColor={colors.muted}
+                    value={title}
+                    onChangeText={setTitle}
+                    autoFocus={modalMode === 'add'}
+                  />
 
-              <View style={styles.durationHeader}>
-                <Text style={styles.fieldLabel}>DURATION</Text>
-                <TouchableOpacity onPress={() => setDurationSkipped((s) => !s)}>
-                  <Text style={styles.skip}>{durationSkipped ? 'SET' : 'SKIP'}</Text>
-                </TouchableOpacity>
-              </View>
-              {durationSkipped ? (
-                <TouchableOpacity style={styles.skippedRow} onPress={() => setDurationSkipped(false)}>
-                  <Text style={styles.skipped}>Tap to set duration</Text>
-                </TouchableOpacity>
-              ) : (
-                <>
-                  <View
-                    style={styles.drumRow}
-                    onTouchStart={() => setModalScrollEnabled(false)}
-                    onTouchEnd={() => setModalScrollEnabled(true)}
-                    onTouchCancel={() => setModalScrollEnabled(true)}
-                  >
-                    <DrumColumn values={MINUTES} selectedIndex={durationMin} onSelect={setDurationMin} />
-                    <Text style={styles.colon}>:</Text>
-                    <DrumColumn values={SECONDS} selectedIndex={durationSec} onSelect={setDurationSec} />
+                  <View style={styles.durationHeader}>
+                    <Text style={styles.fieldLabel}>DURATION</Text>
+                    <TouchableOpacity onPress={() => setDurationSkipped((s) => !s)}>
+                      <Text style={styles.skip}>{durationSkipped ? 'SET' : 'SKIP'}</Text>
+                    </TouchableOpacity>
                   </View>
-                  <View style={styles.drumLabels}>
-                    <Text style={styles.drumLabel}>MIN</Text>
-                    <Text style={styles.drumLabel}>SEC</Text>
-                  </View>
-                  <View style={styles.presetRow}>
-                    {PRESETS.map((m) => (
-                      <TouchableOpacity
-                        key={m}
-                        style={[styles.preset, durationMin === m && durationSec === 0 && styles.presetActive]}
-                        onPress={() => { setDurationMin(m); setDurationSec(0); }}
+                  {durationSkipped ? (
+                    <TouchableOpacity style={styles.skippedRow} onPress={() => setDurationSkipped(false)}>
+                      <Text style={styles.skipped}>Tap to set duration</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <>
+                      <View
+                        style={styles.drumRow}
+                        onTouchStart={() => setModalScrollEnabled(false)}
+                        onTouchEnd={() => setModalScrollEnabled(true)}
+                        onTouchCancel={() => setModalScrollEnabled(true)}
                       >
-                        <Text style={[styles.presetText, durationMin === m && durationSec === 0 && styles.presetTextActive]}>
-                          {m} MIN
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                        <DrumColumn values={MINUTES} selectedIndex={durationMin} onSelect={setDurationMin} />
+                        <Text style={styles.colon}>:</Text>
+                        <DrumColumn values={SECONDS} selectedIndex={durationSec} onSelect={setDurationSec} />
+                      </View>
+                      <View style={styles.drumLabels}>
+                        <Text style={styles.drumLabel}>MIN</Text>
+                        <Text style={styles.drumLabel}>SEC</Text>
+                      </View>
+                      <View style={styles.presetRow}>
+                        {PRESETS.map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[styles.preset, durationMin === m && durationSec === 0 && styles.presetActive]}
+                            onPress={() => { setDurationMin(m); setDurationSec(0); }}
+                          >
+                            <Text style={[styles.presetText, durationMin === m && durationSec === 0 && styles.presetTextActive]}>
+                              {m} MIN
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setDescriptionOpen(o => !o)}>
+                    <Text style={styles.fieldLabel}>DESCRIPTION</Text>
+                    <Feather name={descriptionOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {descriptionOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="What is this bit about?"
+                      placeholderTextColor={colors.muted}
+                      value={description}
+                      onChangeText={setDescription}
+                      multiline
+                      numberOfLines={3}
+                      textAlignVertical="top"
+                    />
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVibeOpen(o => !o)}>
+                    <Text style={styles.fieldLabel}>VIBE</Text>
+                    <Feather name={vibeOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {vibeOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="e.g. dark, slow build, playful"
+                      placeholderTextColor={colors.muted}
+                      value={vibe}
+                      onChangeText={setVibe}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setVerbiageOpen(o => !o)}>
+                    <Text style={styles.fieldLabel}>VERBIAGE</Text>
+                    <Feather name={verbiageOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {verbiageOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 140 }]}
+                      placeholder="Full script or phrasing..."
+                      placeholderTextColor={colors.muted}
+                      value={verbiage}
+                      onChangeText={setVerbiage}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setCuesOpen(o => !o)}>
+                    <Text style={styles.fieldLabel}>CUES</Text>
+                    <Feather name={cuesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {cuesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Keyword cues, one per line (e.g. reach for hat)"
+                      placeholderTextColor={colors.muted}
+                      value={cues}
+                      onChangeText={setCues}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
+
+                  <TouchableOpacity style={styles.collapsibleRow} onPress={() => setNotesOpen(o => !o)}>
+                    <Text style={styles.fieldLabel}>NOTES</Text>
+                    <Feather name={notesOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
+                  </TouchableOpacity>
+                  {notesOpen && (
+                    <TextInput
+                      style={[styles.notesInput, { maxHeight: 94 }]}
+                      placeholder="Setup, props, private reminders..."
+                      placeholderTextColor={colors.muted}
+                      value={notes}
+                      onChangeText={setNotes}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  )}
+                </View>
+
+                <View>
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={modalMode === 'add' ? maybeCloseAdd : () => setModalMode('closed')}>
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+                      <Text style={styles.saveBtnText}>Save</Text>
+                    </TouchableOpacity>
                   </View>
-                </>
-              )}
-
-              <Text style={[styles.fieldLabel, { marginTop: 24 }]}>DESCRIPTION</Text>
-              <TextInput
-                style={styles.notesInput}
-                placeholder="What is this trick or bit about?"
-                placeholderTextColor={colors.muted}
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-
-              <Text style={styles.fieldLabel}>VIBE</Text>
-              <TextInput
-                style={styles.singleInput}
-                placeholder="e.g. dark, slow build, playful"
-                placeholderTextColor={colors.muted}
-                value={vibe}
-                onChangeText={setVibe}
-              />
-
-              <Text style={styles.fieldLabel}>VERBIAGE</Text>
-              <TextInput
-                style={styles.notesInput}
-                placeholder="Full script or phrasing..."
-                placeholderTextColor={colors.muted}
-                value={verbiage}
-                onChangeText={setVerbiage}
-                multiline
-                numberOfLines={4}
-                textAlignVertical="top"
-              />
-
-              <Text style={styles.fieldLabel}>CUES</Text>
-              <TextInput
-                style={styles.notesInput}
-                placeholder="Keyword cues, one per line (e.g. reach for hat)"
-                placeholderTextColor={colors.muted}
-                value={cues}
-                onChangeText={setCues}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-
-              <Text style={styles.fieldLabel}>NOTES</Text>
-              <TextInput
-                style={styles.notesInput}
-                placeholder="Setup, props, private reminders..."
-                placeholderTextColor={colors.muted}
-                value={notes}
-                onChangeText={setNotes}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalMode('closed')}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-                  <Text style={styles.saveBtnText}>Save</Text>
-                </TouchableOpacity>
+                  {modalMode === 'edit' ? (
+                    <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteItem}>
+                      <Text style={styles.deleteBtnText}>Delete this item</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
               </View>
-
-              {modalMode === 'edit' ? (
-                <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteItem}>
-                  <Text style={styles.deleteBtnText}>Delete this item</Text>
-                </TouchableOpacity>
-              ) : null}
             </ScrollView>
+
+            {/* Discard new item prompt — rendered inside the modal to avoid iOS stacking issue */}
+            {discardAddPrompt && (
+              <View style={[styles.exitOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+                <View style={styles.exitCard}>
+                  <Text style={styles.exitTitle}>Discard bit?</Text>
+                  <Text style={styles.exitBody}>
+                    This bit hasn't been saved. Closing will lose what you've entered.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.exitDiscardBtn}
+                    onPress={() => { setDiscardAddPrompt(false); setModalMode('closed'); }}
+                  >
+                    <Text style={styles.exitDiscardBtnText}>Discard</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.exitCancelBtn}
+                    onPress={() => setDiscardAddPrompt(false)}
+                  >
+                    <Text style={styles.exitCancelBtnText}>Keep editing</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -615,6 +728,19 @@ const styles = StyleSheet.create({
   back: { color: colors.cream, fontSize: 24 },
   headerTitle: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
   content: { paddingHorizontal: 24, paddingBottom: 40 },
+  scrollArrow: {
+    position: 'absolute',
+    right: 24,
+    bottom: 40,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionLabel: {
     color: colors.muted,
     fontSize: 11,
@@ -716,6 +842,15 @@ const styles = StyleSheet.create({
   fullScreenClose: { color: colors.muted, fontSize: 18 },
   sheetHeading: { color: colors.muted, fontSize: 11, letterSpacing: 2.5 },
   formContent: { paddingHorizontal: 24, paddingBottom: 40 },
+  blockFormContent: { paddingHorizontal: 24, paddingBottom: 40, flexGrow: 1 },
+  blockFormInner: { flex: 1, justifyContent: 'space-between' },
+  collapsibleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginBottom: 0,
+  },
   sheetInput: {
     color: colors.cream,
     fontSize: 26,
@@ -725,7 +860,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 32,
   },
-  fieldLabel: { color: colors.muted, fontSize: 11, letterSpacing: 2, marginBottom: 12 },
+  fieldLabel: { color: colors.muted, fontSize: 14, letterSpacing: 2},
   durationHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -733,8 +868,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   skip: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
-  skippedRow: { marginBottom: 24 },
-  skipped: { color: colors.gold, fontSize: 14 },
+  skippedRow: { marginBottom: 24, alignItems: 'center', justifyContent: 'center' },
+  skipped: { color: colors.gold, fontSize: 14, textAlign: 'center' },
   drumRow: { flexDirection: 'row', alignItems: 'center', height: DRUM_H, marginBottom: 8 },
   colon: { color: colors.muted, fontSize: 28, fontWeight: '200', paddingHorizontal: 8, paddingBottom: 4 },
   drumLabels: {
@@ -767,11 +902,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     borderRadius: 8,
     color: colors.cream,
-    padding: 14,
+    paddingLeft: 14,
+    paddingRight: 14,
+    paddingTop: 0,
     fontSize: 14,
     lineHeight: 22,
     minHeight: 80,
-    marginBottom: 24,
+    marginBottom: 8,
   },
   modalButtons: { flexDirection: 'row', gap: 12 },
   cancelBtn: {

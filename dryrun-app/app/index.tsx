@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import { colors } from '../src/utils/theme';
 
 export default function HomeScreen() {
@@ -9,10 +10,13 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.logoRow}>
-          <View style={styles.logoIcon}>
-            <View style={styles.logoDot} />
+          <View style={styles.logoLeft}>
+            <View style={styles.logoIcon}>
+              <View style={styles.logoDot} />
+            </View>
+            <Text style={styles.logoText}>DRYRUN</Text>
           </View>
-          <Text style={styles.logoText}>DRYRUN</Text>
+          <Text style={styles.versionText}>v{Constants.expoConfig?.version}</Text>
         </View>
       </View>
 
@@ -56,7 +60,17 @@ const styles = StyleSheet.create({
   logoRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  logoLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
+  },
+  versionText: {
+    color: colors.muted,
+    fontSize: 11,
+    letterSpacing: 1,
   },
   logoIcon: {
     width: 28,

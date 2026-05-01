@@ -44,6 +44,11 @@ export default function RunSummaryScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.replace('/')}>
+          <Text style={styles.closeBtn}>✕</Text>
+        </TouchableOpacity>
+      </View>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -114,9 +119,21 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 16,
+  },
+  closeBtn: {
+    color: colors.muted,
+    fontSize: 18,
+  },
   scrollContent: {
     paddingHorizontal: 28,
-    paddingTop: 60,
+    paddingTop: 16,
     paddingBottom: 24,
   },
   completeLabel: {

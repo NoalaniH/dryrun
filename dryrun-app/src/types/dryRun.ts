@@ -1,9 +1,7 @@
-export type LibraryItemType = 'trick' | 'bit';
 
 export type LibraryItem = {
   id: string;
   title: string;
-  type: LibraryItemType;
   defaultDurationSeconds: number | null;
   description: string;
   defaultVibe?: string;
@@ -16,7 +14,6 @@ export type LibraryItem = {
 
 export type RoutineBlockType =
   | 'open'
-  | 'trick'
   | 'bit'
   | 'interaction'
   | 'transition'
@@ -26,9 +23,9 @@ export type RoutineBlockType =
 export type RoutineBlock = {
   id: string;
   title: string;
-  type: RoutineBlockType;
   durationSeconds: number | null;
   notes: string;
+  description?: string;
   vibe?: string;
   verbiage?: string;
   cues?: string;
