@@ -3,7 +3,7 @@
     "name": "DryRun",
     "slug": "dryrun-app",
     "scheme": "dryrun",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.noalani.dryrun",
-      "buildNumber": "4",
+      "buildNumber": "5",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "RCTAsyncStorageExcludeFromBackup": false
@@ -28,7 +28,8 @@
         "backgroundColor": "#100e0b"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.noalani.dryrun"
     },
     "web": {
       "favicon": "./assets/favicon.png"

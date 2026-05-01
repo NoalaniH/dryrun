@@ -151,7 +151,12 @@ export default function CreateRunScreen() {
 
   return (
     <View style={styles.root}>
-      {/* Static content above drum — no outer ScrollView competing for gestures */}
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+      {/* Static content above drum */}
       <View style={styles.above}>
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => router.back()}>
@@ -182,6 +187,59 @@ export default function CreateRunScreen() {
             <Text style={styles.skip}>{skipped ? 'SET' : 'SKIP'}</Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      {/* Prompter settings — above the drum so they never overlap */}
+      <View style={styles.prompterSection}>
+        <View style={styles.toggleRow}>
+          <Text style={styles.label}>PROMPTER</Text>
+          <TouchableOpacity
+            style={[styles.masterToggle, promptEnabled && styles.masterToggleOn]}
+            onPress={() => setPromptEnabled((v) => !v)}
+          >
+            <Text style={[styles.masterToggleText, promptEnabled && styles.masterToggleTextOn]}>
+              {promptEnabled ? 'ON' : 'OFF'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {promptEnabled && (
+          <>
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Content</Text>
+              <View style={styles.toggleGroup}>
+                {(['cues', 'verbiage'] as const).map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.toggleChip, promptContent === v && styles.toggleChipActive]}
+                    onPress={() => setPromptContent(v)}
+                  >
+                    <Text style={[styles.toggleChipText, promptContent === v && styles.toggleChipTextActive]}>
+                      {v.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Advance</Text>
+              <View style={styles.toggleGroup}>
+                {(['auto', 'manual'] as const).map((v) => (
+                  <TouchableOpacity
+                    key={v}
+                    style={[styles.toggleChip, promptAdvance === v && styles.toggleChipActive]}
+                    onPress={() => setPromptAdvance(v)}
+                  >
+                    <Text style={[styles.toggleChipText, promptAdvance === v && styles.toggleChipTextActive]}>
+                      {v.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </>
+        )}
       </View>
 
       {/* Drum and presets live outside any ScrollView */}
@@ -227,60 +285,11 @@ export default function CreateRunScreen() {
       )}
 
       <View style={styles.footer}>
-        <View style={[styles.toggleRow, { marginBottom: promptEnabled ? 12 : 24 }]}>
-          <Text style={styles.label}>PROMPTER</Text>
-          <TouchableOpacity
-            style={[styles.masterToggle, promptEnabled && styles.masterToggleOn]}
-            onPress={() => setPromptEnabled((v) => !v)}
-          >
-            <Text style={[styles.masterToggleText, promptEnabled && styles.masterToggleTextOn]}>
-              {promptEnabled ? 'ON' : 'OFF'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {promptEnabled && (
-          <>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Content</Text>
-              <View style={styles.toggleGroup}>
-                {(['cues', 'verbiage'] as const).map((v) => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.toggleChip, promptContent === v && styles.toggleChipActive]}
-                    onPress={() => setPromptContent(v)}
-                  >
-                    <Text style={[styles.toggleChipText, promptContent === v && styles.toggleChipTextActive]}>
-                      {v.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            <View style={[styles.toggleRow, { marginBottom: 24 }]}>
-              <Text style={styles.toggleLabel}>Advance</Text>
-              <View style={styles.toggleGroup}>
-                {(['auto', 'manual'] as const).map((v) => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.toggleChip, promptAdvance === v && styles.toggleChipActive]}
-                    onPress={() => setPromptAdvance(v)}
-                  >
-                    <Text style={[styles.toggleChipText, promptAdvance === v && styles.toggleChipTextActive]}>
-                      {v.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </>
-        )}
-
         <TouchableOpacity style={styles.button} onPress={handleSubmit}>
           <Text style={styles.buttonText}>Start building →</Text>
         </TouchableOpacity>
       </View>
+      </ScrollView>
     </View>
   );
 }
@@ -296,8 +305,6 @@ const styles = StyleSheet.create({
   },
   below: {
     paddingHorizontal: 28,
-    flex: 1,
-    justifyContent: 'center',
   },
   topBar: {
     flexDirection: 'row',
@@ -432,4 +439,6 @@ const styles = StyleSheet.create({
   masterToggleOn: { backgroundColor: colors.gold, borderColor: colors.gold },
   masterToggleText: { color: colors.muted, fontSize: 11, letterSpacing: 1.5 },
   masterToggleTextOn: { color: '#1a1100', fontWeight: '600' },
+  prompterSection: { paddingHorizontal: 28 },
+  scrollContent: { flexGrow: 1 },
 });
