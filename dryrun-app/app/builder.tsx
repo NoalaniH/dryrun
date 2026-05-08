@@ -681,7 +681,7 @@ export default function BuilderScreen() {
                 <Text style={styles.fullScreenClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.formContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.runInfoFormContent} showsVerticalScrollIndicator={false} scrollEnabled={modalScrollEnabled}>
               <Text style={styles.sectionLabel}>NAME</Text>
               <TextInput
                 style={styles.sheetInput}
@@ -750,7 +750,7 @@ export default function BuilderScreen() {
                 </>
               )}
 
-              <View style={[styles.promptSettingRow, { marginTop: 32, marginBottom: runInfoPromptEnabled ? 12 : 32 }]}>
+              <View style={[styles.promptSettingRow, { marginTop: 32, marginBottom: 32 }]}>
                 <Text style={styles.sectionLabel}>PROMPTER</Text>
                 <TouchableOpacity
                   style={[styles.promptChip, runInfoPromptEnabled && styles.promptChipActive]}
@@ -763,52 +763,52 @@ export default function BuilderScreen() {
               </View>
 
               {runInfoPromptEnabled && (
-                <>
-                  <View style={styles.promptSettingRow}>
-                    <Text style={styles.promptSettingLabel}>Content</Text>
-                    <View style={styles.promptChipGroup}>
-                      {(['cues', 'verbiage'] as const).map((v) => (
-                        <TouchableOpacity
-                          key={v}
-                          style={[styles.promptChip, runInfoPromptContent === v && styles.promptChipActive]}
-                          onPress={() => setRunInfoPromptContent(v)}
-                        >
-                          <Text style={[styles.promptChipText, runInfoPromptContent === v && styles.promptChipTextActive]}>
-                            {v.toUpperCase()}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                <View style={styles.promptSettingRow}>
+                  <Text style={styles.promptSettingLabel}>Content</Text>
+                  <View style={styles.promptChipGroup}>
+                    {(['cues', 'verbiage'] as const).map((v) => (
+                      <TouchableOpacity
+                        key={v}
+                        style={[styles.promptChip, runInfoPromptContent === v && styles.promptChipActive]}
+                        onPress={() => setRunInfoPromptContent(v)}
+                      >
+                        <Text style={[styles.promptChipText, runInfoPromptContent === v && styles.promptChipTextActive]}>
+                          {v.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
-
-                  <View style={[styles.promptSettingRow, { marginBottom: 32 }]}>
-                    <Text style={styles.promptSettingLabel}>Advance</Text>
-                    <View style={styles.promptChipGroup}>
-                      {(['auto', 'manual'] as const).map((v) => (
-                        <TouchableOpacity
-                          key={v}
-                          style={[styles.promptChip, runInfoPromptAdvance === v && styles.promptChipActive]}
-                          onPress={() => setRunInfoPromptAdvance(v)}
-                        >
-                          <Text style={[styles.promptChipText, runInfoPromptAdvance === v && styles.promptChipTextActive]}>
-                            {v.toUpperCase()}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                </>
+                </View>
               )}
+              {/* Advance option hidden until auto-scroll ships
+              {runInfoPromptEnabled && (
+                <View style={[styles.promptSettingRow, { marginBottom: 32 }]}>
+                  <Text style={styles.promptSettingLabel}>Advance</Text>
+                  <View style={styles.promptChipGroup}>
+                    {(['auto', 'manual'] as const).map((v) => (
+                      <TouchableOpacity
+                        key={v}
+                        style={[styles.promptChip, runInfoPromptAdvance === v && styles.promptChipActive]}
+                        onPress={() => setRunInfoPromptAdvance(v)}
+                      >
+                        <Text style={[styles.promptChipText, runInfoPromptAdvance === v && styles.promptChipTextActive]}>
+                          {v.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )} */}
 
-              <View style={styles.modalButtons}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
-                  <Text style={styles.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRunInfo}>
-                  <Text style={styles.saveBtnText}>Save</Text>
-                </TouchableOpacity>
-              </View>
             </ScrollView>
+            <View style={styles.stickyFooter}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveRunInfo}>
+                <Text style={styles.saveBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -1026,14 +1026,6 @@ export default function BuilderScreen() {
                     />
                   )}
 
-                  <View style={styles.modalButtons}>
-                    <TouchableOpacity style={styles.cancelBtn} onPress={maybeCloseCreate}>
-                      <Text style={styles.cancelBtnText}>Back</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.saveBtn} onPress={handleCreateNew}>
-                      <Text style={styles.saveBtnText}>Save & Add</Text>
-                    </TouchableOpacity>
-                  </View>
                 </View>
               )}
 
@@ -1191,17 +1183,19 @@ export default function BuilderScreen() {
                     />
                   )}
 
-                  <View style={styles.modalButtons}>
-                    <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
-                      <Text style={styles.cancelBtnText}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.saveBtn} onPress={handleSaveEdit}>
-                      <Text style={styles.saveBtnText}>Save</Text>
-                    </TouchableOpacity>
-                  </View>
                 </View>
               )}
             </ScrollView>
+            {(modalView === 'edit' || modalView === 'create') && (
+              <View style={styles.stickyFooter}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={modalView === 'create' ? maybeCloseCreate : closeModal}>
+                  <Text style={styles.cancelBtnText}>{modalView === 'create' ? 'Back' : 'Cancel'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={modalView === 'create' ? handleCreateNew : handleSaveEdit}>
+                  <Text style={styles.saveBtnText}>{modalView === 'create' ? 'Save & Add' : 'Save'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Discard new block prompt — rendered inside the modal to avoid iOS stacking issue */}
             {discardCreatePrompt && (
@@ -1366,7 +1360,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 16 },
+  footer: { paddingHorizontal: 24, paddingBottom: 40, paddingTop: 16,     borderTopWidth: 1,
+    borderTopColor: colors.border, },
   startButton: {
     backgroundColor: colors.gold,
     borderRadius: 10,
@@ -1390,6 +1385,17 @@ const styles = StyleSheet.create({
   },
   fullScreenClose: { color: colors.muted, fontSize: 18 },
   formContent: { paddingHorizontal: 24, paddingBottom: 40 },
+  runInfoFormContent: { paddingHorizontal: 24, paddingBottom: 16 },
+  stickyFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 40,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
   blockFormContent: { paddingHorizontal: 24, paddingBottom: 40, flexGrow: 1 },
   blockFormInner: { flex: 1, justifyContent: 'space-between' },
   sheetHeading: {

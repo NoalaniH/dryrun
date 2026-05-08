@@ -115,7 +115,7 @@ export default function CreateRunScreen() {
   const [skipped, setSkipped] = useState(false);
   const [promptEnabled, setPromptEnabled] = useState(false);
   const [promptContent, setPromptContent] = useState<'cues' | 'verbiage'>('cues');
-  const [promptAdvance, setPromptAdvance] = useState<'auto' | 'manual'>('auto');
+  const [promptAdvance] = useState<'auto' | 'manual'>('auto');
   const [error, setError] = useState('');
 
   async function handleSubmit() {
@@ -231,7 +231,6 @@ export default function CreateRunScreen() {
         </View>
       )}
 
-      {/* Prompter settings — below the drum */}
       <View style={styles.prompterSection}>
         <View style={styles.toggleRow}>
           <Text style={styles.label}>PROMPTER</Text>
@@ -246,50 +245,62 @@ export default function CreateRunScreen() {
         </View>
 
         {promptEnabled && (
-          <>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Content</Text>
-              <View style={styles.toggleGroup}>
-                {(['cues', 'verbiage'] as const).map((v) => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.toggleChip, promptContent === v && styles.toggleChipActive]}
-                    onPress={() => setPromptContent(v)}
-                  >
-                    <Text style={[styles.toggleChipText, promptContent === v && styles.toggleChipTextActive]}>
-                      {v.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Content</Text>
+            <View style={styles.toggleGroup}>
+              {(['cues', 'verbiage'] as const).map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  style={[styles.toggleChip, promptContent === v && styles.toggleChipActive]}
+                  onPress={() => setPromptContent(v)}
+                >
+                  <Text style={[styles.toggleChipText, promptContent === v && styles.toggleChipTextActive]}>
+                    {v.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Advance</Text>
-              <View style={styles.toggleGroup}>
-                {(['auto', 'manual'] as const).map((v) => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.toggleChip, promptAdvance === v && styles.toggleChipActive]}
-                    onPress={() => setPromptAdvance(v)}
-                  >
-                    <Text style={[styles.toggleChipText, promptAdvance === v && styles.toggleChipTextActive]}>
-                      {v.toUpperCase()}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </>
+          </View>
         )}
+        {/* Advance option hidden until auto-scroll ships
+        {promptEnabled && (
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>Advance</Text>
+            <View style={styles.toggleGroup}>
+              {(['auto', 'manual'] as const).map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  style={[styles.toggleChip, promptAdvance === v && styles.toggleChipActive]}
+                  onPress={() => setPromptAdvance(v)}
+                >
+                  <Text style={[styles.toggleChipText, promptAdvance === v && styles.toggleChipTextActive]}>
+                    {v.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )} */}
       </View>
-
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.button} onPress={handleSubmit}>
+      {/* Footer */}
+      {/* <View style={styles.footer}>
+        <TouchableOpacity
+          style={[
+            styles.startButton,
+            run.blocks.length === 0 && styles.startButtonDisabled,
+          ]}
+          onPress={() => run.blocks.length > 0 && router.push('/dry-run')}
+          disabled={run.blocks.length === 0}
+        >
+          <Text style={styles.startButtonText}>▶ Start Dry Run</Text>
+        </TouchableOpacity>
+      </View> */}
+      </ScrollView>
+      <View style={styles.stickyFooter}>
+        <TouchableOpacity style={styles.startButton} onPress={handleSubmit}>
           <Text style={styles.buttonText}>Start building →</Text>
         </TouchableOpacity>
       </View>
-      </ScrollView>
     </View>
   );
 }
@@ -400,6 +411,30 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     paddingTop: 16,
   },
+  stickyFooter: {
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  startButton: {
+    backgroundColor: colors.gold,
+    borderRadius: 10,
+    paddingVertical: 18,
+    alignItems: 'center',
+  },
+  // stickyFooter: {
+  //   flexDirection: 'row',
+  //   // gap: 12,
+  //   paddingHorizontal: 28,
+  //   paddingTop: 16,
+  //   paddingBottom: 40,
+  //   borderTopWidth: 1,
+  //   borderTopColor: colors.border,
+  //   backgroundColor: colors.bg,
+  // },
   button: {
     backgroundColor: colors.gold,
     borderRadius: 10,

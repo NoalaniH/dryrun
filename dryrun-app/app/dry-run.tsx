@@ -27,6 +27,7 @@ export default function DryRunScreen() {
   const [runElapsed, setRunElapsed] = useState(0);
   const [paused, setPaused] = useState(false);
   const [teleprompter, setTeleprompter] = useState(false);
+  // const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
   const blockResults = useRef(new Map<string, number>());
   const startedAt = useRef('');
@@ -35,6 +36,7 @@ export default function DryRunScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const autoScrollAnim = useRef(new Animated.Value(0)).current;
   const autoScrollAnimation = useRef<Animated.CompositeAnimation | null>(null);
+  const currentScrollY = useRef(0);
 
   // Blink animation for over-time clock
   const blinkAnim = useRef(new Animated.Value(1)).current;
@@ -92,41 +94,40 @@ export default function DryRunScreen() {
     };
   }, [run, paused]);
 
-  // Auto-scroll effect for auto+teleprompter mode
-  useEffect(() => {
-    if (autoScrollAnimation.current) {
-      autoScrollAnimation.current.stop();
-      autoScrollAnimation.current = null;
-    }
-    autoScrollAnim.setValue(0);
-
-    if (!run || !teleprompter) return;
-    const block = run.blocks[blockIndex];
-    const promptAdvance = run.promptAdvance ?? 'auto';
-    const hasDuration = block.durationSeconds != null && block.durationSeconds > 0;
-
-    if (promptAdvance !== 'auto' || !hasDuration || paused) return;
-
-    const remainingMs = (block.durationSeconds! - blockElapsed) * 1000;
-    if (remainingMs <= 0) return;
-
-    // We'll drive the scroll via listener on this animated value (0 → 1 over block duration)
-    const anim = Animated.timing(autoScrollAnim, {
-      toValue: 1,
-      duration: remainingMs,
-      useNativeDriver: false,
-    });
-
-    autoScrollAnimation.current = anim;
-    anim.start();
-  }, [teleprompter, blockIndex, paused, run]);
+  // Auto-scroll effect for auto+teleprompter mode (disabled — shipping manual scroll first)
+  // useEffect(() => {
+  //   if (autoScrollAnimation.current) {
+  //     autoScrollAnimation.current.stop();
+  //     autoScrollAnimation.current = null;
+  //   }
+  //
+  //   if (!run || !teleprompter) return;
+  //   const block = run.blocks[blockIndex];
+  //   const promptAdvance = run.promptAdvance ?? 'auto';
+  //   const hasDuration = block.durationSeconds != null && block.durationSeconds > 0;
+  //
+  //   if (promptAdvance !== 'auto' || !hasDuration || paused || !autoScrollEnabled) return;
+  //
+  //   const remainingMs = (block.durationSeconds! - blockElapsed) * 1000;
+  //   if (remainingMs <= 0) return;
+  //
+  //   autoScrollAnim.setValue(currentScrollY.current);
+  //
+  //   const anim = Animated.timing(autoScrollAnim, {
+  //     toValue: 2000,
+  //     duration: remainingMs,
+  //     useNativeDriver: false,
+  //   });
+  //
+  //   autoScrollAnimation.current = anim;
+  //   anim.start();
+  // }, [teleprompter, blockIndex, paused, run, autoScrollEnabled]);
 
   // Listener: scroll the ScrollView as autoScrollAnim progresses
   useEffect(() => {
     const id = autoScrollAnim.addListener(({ value }) => {
-      // We don't know content height ahead of time, so we use a large number
-      // and the ScrollView clamps it. 2000 is a safe upper bound for text content.
-      scrollRef.current?.scrollTo({ y: value * 2000, animated: false });
+      currentScrollY.current = value;
+      scrollRef.current?.scrollTo({ y: value, animated: false });
     });
     return () => autoScrollAnim.removeListener(id);
   }, [autoScrollAnim]);
@@ -156,6 +157,7 @@ export default function DryRunScreen() {
       blinkAnimation.current = null;
     }
     blinkAnim.setValue(1);
+    currentScrollY.current = 0;
     autoScrollAnim.setValue(0);
     setBlockIndex(nextIndex);
     setBlockElapsed(0);
@@ -235,29 +237,24 @@ export default function DryRunScreen() {
   const progress = hasDuration ? Math.min(1, blockElapsed / block.durationSeconds!) : null;
 
   const promptContent = run.promptContent ?? 'cues';
-  const promptAdvance = run.promptAdvance ?? 'auto';
+  // const promptAdvance = run.promptAdvance ?? 'auto';
   const rawText = promptContent === 'cues' ? (block.cues ?? '') : (block.verbiage ?? '');
   const hasPromptText = rawText.trim().length > 0;
 
-  // For auto mode, fall back to manual if no duration
-  const effectiveAdvance = (promptAdvance === 'auto' && !hasDuration) ? 'manual' : promptAdvance;
+  // For auto mode, fall back to manual if no duration (used when auto-scroll is re-enabled)
+  // const effectiveAdvance = (promptAdvance === 'auto' && !hasDuration) ? 'manual' : promptAdvance;
 
   return (
     <View style={styles.container}>
       {/* Top bar */}
       <View style={styles.topBar}>
-        <TouchableOpacity
-          onPress={handleEnd}
-          hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-        >
-          <Text style={styles.endBtn}>× END</Text>
-        </TouchableOpacity>
-
-        <Text style={styles.counter}>
-          {pad(blockIndex + 1)} / {pad(run.blocks.length)}
-        </Text>
-
-        <View style={styles.topRight}>
+          
+          <TouchableOpacity
+            onPress={() => setPaused((p) => !p)}
+            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+          >
+            <Text style={styles.holdBtn}>{paused ? '▶ RESUME' : '‖ HOLD'}</Text>
+          </TouchableOpacity>
           {hasPromptText && (
             <TouchableOpacity
               onPress={() => setTeleprompter((t) => !t)}
@@ -269,18 +266,36 @@ export default function DryRunScreen() {
               </Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            onPress={() => setPaused((p) => !p)}
-            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-          >
-            <Text style={styles.holdBtn}>{paused ? '▶ RESUME' : '‖ HOLD'}</Text>
-          </TouchableOpacity>
+          {/* {teleprompter && effectiveAdvance === 'auto' && (
+            <TouchableOpacity
+              onPress={() => setAutoScrollEnabled((a) => !a)}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              style={styles.promptToggle}
+            >
+              <Text style={[styles.promptToggleText, autoScrollEnabled && styles.promptToggleOn]}>
+                SCROLL {autoScrollEnabled ? 'ON' : 'OFF'}
+              </Text>
+            </TouchableOpacity>
+          )} */}
+
+        <View style={styles.topRight}>
+
+        <TouchableOpacity
+          onPress={handleEnd}
+          hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+        >
+          <Text style={styles.endBtn}>× END</Text>
+        </TouchableOpacity>
         </View>
       </View>
+      
 
       {teleprompter && hasPromptText ? (
         /* ── Teleprompter mode ── */
         <View style={styles.main}>
+          <Text style={styles.counter}>
+            {pad(blockIndex + 1)} / {pad(run.blocks.length)}
+          </Text>
           <Animated.Text style={[styles.clock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
           <Text style={styles.runTimer}>RUN  {formatClock(runElapsed)}</Text>
 
@@ -291,46 +306,34 @@ export default function DryRunScreen() {
           ) : (
             <View style={styles.progressTrackEmpty} />
           )}
-          {/* Timers always on top */}
-          {/* <View style={styles.compactTimers}>
-            <Animated.Text style={[styles.compactClock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
-            <Text style={styles.compactRun}>RUN  {formatClock(runElapsed)}</Text>
-          </View>
 
-          {progress !== null ? (
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-            </View>
-          ) : (
-            <View style={styles.progressTrackEmpty} />
-          )} */}
-
-          {effectiveAdvance === 'manual' ? (
-            /* Manual: show all text in a scrollable area */
-            <ScrollView
-              style={styles.manualScroll}
-              contentContainerStyle={styles.manualScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={styles.manualText}>{rawText}</Text>
-            </ScrollView>
-          ) : (
-            /* Auto: text scrolls at timed pace */
+          <ScrollView
+            style={styles.manualScroll}
+            contentContainerStyle={styles.manualScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.manualText}>{rawText}</Text>
+          </ScrollView>
+          {/* Auto-scroll branch preserved for future iteration:
+          {effectiveAdvance === 'auto' && (
             <ScrollView
               ref={scrollRef}
               style={styles.autoScroll}
               contentContainerStyle={styles.autoScrollContent}
               showsVerticalScrollIndicator={false}
-              scrollEnabled={false}
+              scrollEnabled={!autoScrollEnabled}
             >
               <Text style={styles.autoText}>{rawText}</Text>
             </ScrollView>
-          )}
+          )} */}
 
         </View>
       ) : (
         /* ── Normal mode ── */
         <View style={styles.main}>
+          <Text style={styles.counter}>
+            {pad(blockIndex + 1)} / {pad(run.blocks.length)}
+          </Text>
           <Animated.Text style={[styles.clock, { opacity: blinkAnim }]}>{formatClock(blockElapsed)}</Animated.Text>
           <Text style={styles.runTimer}>RUN  {formatClock(runElapsed)}</Text>
 
@@ -395,7 +398,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   endBtn: { color: colors.muted, fontSize: 12, letterSpacing: 1.5 },
-  counter: { color: colors.muted, fontSize: 12, letterSpacing: 2 },
+  counter: { color: colors.muted, fontSize: 12, letterSpacing: 2, marginTop: 20 },
   holdBtn: { color: colors.muted, fontSize: 12, letterSpacing: 1.5 },
   promptToggle: {
     paddingHorizontal: 8,
@@ -462,7 +465,6 @@ const styles = StyleSheet.create({
     fontWeight: '200',
     letterSpacing: 4,
     fontVariant: ['tabular-nums'],
-    marginTop: 32,
     marginBottom: 8,
   },
   runTimer: {
@@ -509,9 +511,8 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   autoScrollContent: {
-    flexGrow: 1,
-    justifyContent: 'flex-end',
-    paddingBottom: 300,
+    paddingTop: 300,
+    paddingBottom: 600,
   },
   autoText: {
     color: colors.cream,
